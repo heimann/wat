@@ -1,0 +1,9 @@
+zig-out/
+zig-cache/
+.zig-cache/
+/debug/
+/release/
+/build-*/
+
+# Test files
+test.zig

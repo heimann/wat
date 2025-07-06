@@ -46,6 +46,7 @@ zig build
 ./zig-out/bin/wat myfile.py   # Python
 ./zig-out/bin/wat myfile.js   # JavaScript
 ./zig-out/bin/wat myfile.ts   # TypeScript
+./zig-out/bin/wat myfile.rs   # Rust
 ```
 
 ## Usage (Future)
@@ -74,8 +75,8 @@ wat *.ts  # TypeScript files
 - [x] Command-line interface
 
 ### Phase 2: Multi-Language Support (In Progress)
-- [x] Bundle tree-sitter grammars for: Go, Python, JavaScript, TypeScript
-- [ ] Bundle tree-sitter grammars for: Rust, C, Java, Elixir, HTML
+- [x] Bundle tree-sitter grammars for: Go, Python, JavaScript, TypeScript, Rust
+- [ ] Bundle tree-sitter grammars for: C, Java, Elixir, HTML
 - [x] Language auto-detection based on file extensions  
 - [x] Language-specific symbol extraction rules
 - [x] Unified symbol output format across languages
@@ -86,13 +87,13 @@ wat *.ts  # TypeScript files
 - ✅ Python (v0.23.6) - functions, classes, assignments (includes scanner.c)
 - ✅ JavaScript (v0.23.1) - functions, classes, methods, const/let/var (includes scanner.c)
 - ✅ TypeScript (v0.23.2) - interfaces, type aliases, enums, namespaces, all JS features (includes scanner.c)
-- 📋 Rust - Next to implement
+- ✅ Rust (v0.24.0) - functions, structs, enums, traits, impl blocks, macros, modules (includes scanner.c)
 - 📋 C - Planned
 - 📋 Java - Planned
 - 📋 Elixir - Planned
 - 📋 HTML - Planned
 
-Binary size: ~7.7MB (grows ~0.5-1.0MB per language)
+Binary size: ~9.0MB (grows ~0.5-1.3MB per language)
 
 ### Phase 3: Persistent Index
 - [ ] SQLite-based symbol database
@@ -139,7 +140,7 @@ wat
 │   ├── Python ✓
 │   ├── JavaScript ✓
 │   ├── TypeScript ✓
-│   ├── Rust
+│   ├── Rust ✓
 │   ├── Zig ✓
 │   ├── HTML
 │   └── C
@@ -342,12 +343,13 @@ If you're picking up development in a new Claude Code instance:
 ./zig-out/bin/wat tests/fixtures/simple.py   # Should work
 ./zig-out/bin/wat tests/fixtures/simple.js   # Should work
 ./zig-out/bin/wat tests/fixtures/simple.ts   # Should work
+./zig-out/bin/wat tests/fixtures/simple.rs   # Should work
 
 # Run tests
-make test  # Should show all 5 languages passing
+make test  # Should show all 6 languages passing
 
 # Check binary size
-ls -lh ./zig-out/bin/wat  # Should be ~7.7MB with 5 languages
+ls -lh ./zig-out/bin/wat  # Should be ~9.0MB with 6 languages
 ```
 
 ### Next Steps
@@ -355,14 +357,15 @@ ls -lh ./zig-out/bin/wat  # Should be ~7.7MB with 5 languages
    - Added scanner.c support
    - Supports .ts and .tsx extensions
    - Includes interfaces, type aliases, enums, namespaces
-2. **Rust** is next
-   - Complex grammar with impl blocks, traits
-   - May need scanner.c
-3. **C** for foundational support
+2. ~~**Rust** is next~~ ✅ Complete!
+   - Added support for structs, enums, traits, impl blocks
+   - Includes scanner.c support
+   - Extracts macros and modules
+3. **C** is next for foundational support
    - Simpler grammar
    - Support .c and .h files
 4. Remember to check for scanner.c files (Python and JS have them)
-5. Each language adds ~0.5-0.6MB to binary size
+5. Each language adds ~0.5-1.3MB to binary size
 6. Keep the "extract everything" philosophy - include private methods, local variables, etc.
 
 ### Key Files to Know

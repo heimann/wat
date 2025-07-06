@@ -6,6 +6,7 @@ extern fn tree_sitter_go() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_python() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_javascript() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_typescript() callconv(.C) *tree_sitter.Language;
+extern fn tree_sitter_rust() callconv(.C) *tree_sitter.Language;
 
 fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
     if (std.mem.endsWith(u8, file_path, ".zig")) {
@@ -18,6 +19,8 @@ fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
         return tree_sitter_javascript();
     } else if (std.mem.endsWith(u8, file_path, ".ts") or std.mem.endsWith(u8, file_path, ".tsx")) {
         return tree_sitter_typescript();
+    } else if (std.mem.endsWith(u8, file_path, ".rs")) {
+        return tree_sitter_rust();
     }
     return null;
 }
@@ -113,7 +116,18 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
         std.mem.eql(u8, node_type, "interface_declaration") or
         std.mem.eql(u8, node_type, "type_alias_declaration") or
         std.mem.eql(u8, node_type, "enum_declaration") or
-        std.mem.eql(u8, node_type, "internal_module")) {
+        std.mem.eql(u8, node_type, "internal_module") or
+        // Rust node types
+        std.mem.eql(u8, node_type, "function_item") or
+        std.mem.eql(u8, node_type, "struct_item") or
+        std.mem.eql(u8, node_type, "enum_item") or
+        std.mem.eql(u8, node_type, "trait_item") or
+        std.mem.eql(u8, node_type, "impl_item") or
+        std.mem.eql(u8, node_type, "const_item") or
+        std.mem.eql(u8, node_type, "static_item") or
+        std.mem.eql(u8, node_type, "type_item") or
+        std.mem.eql(u8, node_type, "mod_item") or
+        std.mem.eql(u8, node_type, "macro_definition")) {
         
         // Find the identifier child
         var i: u32 = 0;

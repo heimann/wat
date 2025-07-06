@@ -185,5 +185,46 @@ else
     exit 1
 fi
 
+echo "Testing Rust support..."
+# Expected output for Rust (sorted for comparison)
+EXPECTED_RUST=$(cat <<'EOF'
+Drawable	19	trait_item
+Drawable	23	impl_item
+GLOBAL_CONFIG	46	static_item
+Point	4	struct_item
+Point	9	impl_item
+Result	44	type_item
+Status	29	enum_item
+VERSION	2	const_item
+add	34	function_item
+debug_print	48	macro_definition
+distance	14	function_item
+draw	24	function_item
+format	39	function_item
+main	54	function_item
+new	10	function_item
+utils	38	mod_item
+EOF
+)
+
+# Run wat on the Rust test fixture and sort output
+ACTUAL_RUST=$(./zig-out/bin/wat tests/fixtures/simple.rs 2>&1 | sort)
+
+# Sort expected output for comparison
+EXPECTED_RUST_SORTED=$(echo "$EXPECTED_RUST" | sort)
+
+# Compare Rust outputs
+if [ "$ACTUAL_RUST" = "$EXPECTED_RUST_SORTED" ]; then
+    echo "✓ Rust test passed"
+else
+    echo "✗ Rust test failed: Output mismatch"
+    echo "Expected:"
+    echo "$EXPECTED_RUST_SORTED"
+    echo ""
+    echo "Actual:"
+    echo "$ACTUAL_RUST"
+    exit 1
+fi
+
 echo "✓ All tests passed: Symbol extraction works correctly for all languages"
 exit 0

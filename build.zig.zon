@@ -61,6 +61,10 @@
             .url = "git+https://github.com/tree-sitter/tree-sitter-typescript#f975a621f4e7f532fe322e13c4f79495e0a7b2e7",
             .hash = "N-V-__8AALhpIQFpocCrfuYTb_Vzvxj3QG0T-yqi9x1QNRNM",
         },
+        .tree_sitter_rust = .{
+            .url = "git+https://github.com/tree-sitter/tree-sitter-rust#18b0515fca567f5a10aee9978c6d2640e878671a",
+            .hash = "N-V-__8AAItxbQDcrvshXYdPUV9STG6PaJyk2DZb-uBzQjlw",
+        },
     },
     .paths = .{
         "build.zig",

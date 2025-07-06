@@ -348,6 +348,46 @@ zig build --fetch  # First time only
 zig build
 ```
 
+## Installation
+
+### Quick Install (Recommended)
+
+```bash
+# Build and install to ~/.local/bin
+make install
+
+# Or use the install script
+./install.sh
+```
+
+### Manual Installation Options
+
+```bash
+# Option 1: Copy binary to ~/.local/bin
+mkdir -p ~/.local/bin
+cp ./zig-out/bin/wat ~/.local/bin/
+
+# Option 2: Create a symlink (great for development)
+ln -sf $(pwd)/zig-out/bin/wat ~/.local/bin/wat
+
+# Option 3: Install system-wide
+sudo cp ./zig-out/bin/wat /usr/local/bin/
+```
+
+### Other Make Targets
+
+```bash
+make install         # Build release version and install
+make install-debug   # Install debug build
+make install-link    # Install as symlink (for development)
+make uninstall      # Remove installed binary
+```
+
+After installation, make sure `~/.local/bin` is in your PATH:
+```bash
+export PATH="$PATH:$HOME/.local/bin"  # Add to ~/.bashrc or ~/.zshrc
+```
+
 ## Contributing
 
 This project is in early development. Key areas for contribution:

@@ -9,6 +9,7 @@ extern fn tree_sitter_typescript() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_rust() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_c() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_java() callconv(.C) *tree_sitter.Language;
+extern fn tree_sitter_elixir() callconv(.C) *tree_sitter.Language;
 
 fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
     if (std.mem.endsWith(u8, file_path, ".zig")) {
@@ -27,6 +28,8 @@ fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
         return tree_sitter_c();
     } else if (std.mem.endsWith(u8, file_path, ".java")) {
         return tree_sitter_java();
+    } else if (std.mem.endsWith(u8, file_path, ".ex") or std.mem.endsWith(u8, file_path, ".exs")) {
+        return tree_sitter_elixir();
     }
     return null;
 }
@@ -337,6 +340,66 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize, debu
                             const line = id_node.startPoint().row + 1;
                             
                             std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, node_type });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Special handling for Elixir calls (defmodule, def, defp, etc.)
+    if (std.mem.eql(u8, node_type, "call")) {
+        if (node.child(0)) |first_child| {
+            if (std.mem.eql(u8, first_child.kind(), "identifier")) {
+                const start = first_child.startByte();
+                const end = first_child.endByte();
+                const call_type = source[start..end];
+                
+                
+                // Check if it's a definition call
+                if (std.mem.eql(u8, call_type, "defmodule") or
+                    std.mem.eql(u8, call_type, "def") or
+                    std.mem.eql(u8, call_type, "defp") or
+                    std.mem.eql(u8, call_type, "defmacro") or
+                    std.mem.eql(u8, call_type, "defprotocol") or
+                    std.mem.eql(u8, call_type, "defimpl")) {
+                    
+                    // Get the name from arguments
+                    if (node.child(1)) |args| {
+                        if (std.mem.eql(u8, args.kind(), "arguments")) {
+                            if (args.child(0)) |name_node| {
+                                // Handle module names (aliases)
+                                if (std.mem.eql(u8, name_node.kind(), "alias")) {
+                                    // For now, just get the whole alias text
+                                    const n_start = name_node.startByte();
+                                    const n_end = name_node.endByte();
+                                    const name = source[n_start..n_end];
+                                    const line = name_node.startPoint().row + 1;
+                                    std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, call_type });
+                                } else if (std.mem.eql(u8, name_node.kind(), "identifier") or
+                                           std.mem.eql(u8, name_node.kind(), "atom")) {
+                                    const n_start = name_node.startByte();
+                                    const n_end = name_node.endByte();
+                                    var name = source[n_start..n_end];
+                                    // Remove leading : from atoms
+                                    if (name.len > 0 and name[0] == ':') {
+                                        name = name[1..];
+                                    }
+                                    const line = name_node.startPoint().row + 1;
+                                    std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, call_type });
+                                } else if (std.mem.eql(u8, name_node.kind(), "call")) {
+                                    // Function definitions with pattern matching
+                                    if (name_node.child(0)) |func_name| {
+                                        if (std.mem.eql(u8, func_name.kind(), "identifier")) {
+                                            const n_start = func_name.startByte();
+                                            const n_end = func_name.endByte();
+                                            const name = source[n_start..n_end];
+                                            const line = func_name.startPoint().row + 1;
+                                            std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, call_type });
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }

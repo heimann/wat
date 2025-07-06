@@ -312,5 +312,44 @@ else
     exit 1
 fi
 
+echo "Testing Elixir support..."
+# Expected output for Elixir (sorted for comparison)
+EXPECTED_ELIXIR=$(cat <<'EOF'
+Drawable	24	defprotocol
+Drawable	28	defimpl
+Main	48	defmodule
+Point	2	defmodule
+Utils	34	defmodule
+add	55	defp
+debug_print	41	defmacro
+distance	13	def
+draw	25	def
+draw	29	def
+format	37	def
+main	51	def
+new	9	def
+private_helper	19	defp
+EOF
+)
+
+# Run wat on the Elixir test fixture and sort output
+ACTUAL_ELIXIR=$(./zig-out/bin/wat tests/fixtures/simple.ex 2>&1 | sort)
+
+# Sort expected output for comparison
+EXPECTED_ELIXIR_SORTED=$(echo "$EXPECTED_ELIXIR" | sort)
+
+# Compare Elixir outputs
+if [ "$ACTUAL_ELIXIR" = "$EXPECTED_ELIXIR_SORTED" ]; then
+    echo "✓ Elixir test passed"
+else
+    echo "✗ Elixir test failed: Output mismatch"
+    echo "Expected:"
+    echo "$EXPECTED_ELIXIR_SORTED"
+    echo ""
+    echo "Actual:"
+    echo "$ACTUAL_ELIXIR"
+    exit 1
+fi
+
 echo "✓ All tests passed: Symbol extraction works correctly for all languages"
 exit 0

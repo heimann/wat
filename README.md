@@ -49,6 +49,9 @@ zig build
 ./zig-out/bin/wat myfile.rs   # Rust
 ./zig-out/bin/wat myfile.c    # C
 ./zig-out/bin/wat myfile.h    # C headers
+./zig-out/bin/wat myfile.java # Java
+./zig-out/bin/wat myfile.ex   # Elixir
+./zig-out/bin/wat myfile.exs  # Elixir scripts
 ```
 
 ## Usage (Future)
@@ -77,8 +80,8 @@ wat *.ts  # TypeScript files
 - [x] Command-line interface
 
 ### Phase 2: Multi-Language Support (In Progress)
-- [x] Bundle tree-sitter grammars for: Go, Python, JavaScript, TypeScript, Rust, C
-- [ ] Bundle tree-sitter grammars for: Java, Elixir, HTML
+- [x] Bundle tree-sitter grammars for: Go, Python, JavaScript, TypeScript, Rust, C, Java, Elixir
+- [ ] Bundle tree-sitter grammars for: HTML
 - [x] Language auto-detection based on file extensions  
 - [x] Language-specific symbol extraction rules
 - [x] Unified symbol output format across languages
@@ -91,8 +94,8 @@ wat *.ts  # TypeScript files
 - ✅ TypeScript (v0.23.2) - interfaces, type aliases, enums, namespaces, all JS features (includes scanner.c)
 - ✅ Rust (v0.24.0) - functions, structs, enums, traits, impl blocks, macros, modules (includes scanner.c)
 - ✅ C (v0.24.1) - functions, structs, enums, unions, typedefs, macros, variables (no scanner.c)
-- 📋 Java - Planned
-- 📋 Elixir - Planned
+- ✅ Java (v0.23.5) - classes, interfaces, methods, fields, constructors, enums, enum constants (no scanner.c)
+- ✅ Elixir (v0.3.4) - modules, functions (def/defp), macros, protocols, implementations (includes scanner.c)
 - 📋 HTML - Planned
 
 Binary size: ~9.8MB (grows ~0.5-1.3MB per language)
@@ -161,7 +164,7 @@ All language support is compiled directly into the binary:
 - **Zero configuration** - Works out of the box
 - **Fast startup** - No dynamic loading overhead
 - **Reliable** - No missing dependencies
-- **Small footprint** - ~30MB binary with 10 languages
+- **Small footprint** - ~13MB binary with 9 languages, targeting ~30MB with 10+ languages
 
 ## Why Not Just Use LSP?
 
@@ -347,12 +350,14 @@ If you're picking up development in a new Claude Code instance:
 ./zig-out/bin/wat tests/fixtures/simple.ts   # Should work
 ./zig-out/bin/wat tests/fixtures/simple.rs   # Should work
 ./zig-out/bin/wat tests/fixtures/simple.c    # Should work
+./zig-out/bin/wat tests/fixtures/simple.java # Should work
+./zig-out/bin/wat tests/fixtures/simple.ex   # Should work
 
 # Run tests
-make test  # Should show all 7 languages passing
+make test  # Should show all 9 languages passing
 
 # Check binary size
-ls -lh ./zig-out/bin/wat  # Should be ~9.8MB with 7 languages
+ls -lh ./zig-out/bin/wat  # Should be ~13MB with 9 languages
 ```
 
 ### Next Steps

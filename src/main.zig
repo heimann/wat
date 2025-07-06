@@ -84,6 +84,12 @@ pub fn main() !void {
         }
         
         try refsCommand(allocator, args[2], with_context, include_defs);
+    } else if (std.mem.eql(u8, args[1], "context")) {
+        if (args.len < 3) {
+            std.debug.print("Usage: {s} context <symbol>\n", .{args[0]});
+            return;
+        }
+        try contextCommand(allocator, args[2]);
     } else {
         // Default: process single file
         const file_path = args[1];
@@ -583,7 +589,11 @@ fn indexDirectory(allocator: std.mem.Allocator, path: []const u8, db: *Database,
     
     var it = dir.iterate();
     while (try it.next()) |entry| {
-        const full_path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ path, entry.name });
+        // Properly join paths avoiding double slashes
+        const full_path = if (std.mem.endsWith(u8, path, "/"))
+            try std.fmt.allocPrint(allocator, "{s}{s}", .{ path, entry.name })
+        else
+            try std.fmt.allocPrint(allocator, "{s}/{s}", .{ path, entry.name });
         defer allocator.free(full_path);
         
         switch (entry.kind) {
@@ -694,6 +704,226 @@ fn refsCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_conte
             std.debug.print("{s}:{d}:{d}\n", .{ ref.path, ref.line, ref.column });
         }
     }
+}
+
+fn contextCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
+    var db = try Database.init("wat.db");
+    defer db.deinit();
+    
+    // Find symbol definitions
+    const symbols = try db.findSymbol(symbol_name, allocator);
+    defer @import("database.zig").deinitSymbols(symbols, allocator);
+    
+    if (symbols.len == 0) {
+        std.debug.print("Symbol '{s}' not found\n", .{symbol_name});
+        return;
+    }
+    
+    // For each symbol definition, extract full context
+    for (symbols) |sym| {
+        std.debug.print("// {s} ({s}) at {s}:{d}\n", .{ sym.name, sym.node_type, sym.path, sym.line });
+        std.debug.print("// " ++ "=" ** 60 ++ "\n", .{});
+        
+        // Read the file content
+        const file_content = std.fs.cwd().readFileAlloc(allocator, sym.path, 1024 * 1024 * 10) catch |err| {
+            std.debug.print("Error reading file {s}: {}\n", .{ sym.path, err });
+            continue;
+        };
+        defer allocator.free(file_content);
+        
+        // Parse the file to get the AST
+        const parser = tree_sitter.Parser.create();
+        defer parser.destroy();
+        
+        const language = detectLanguage(sym.path) orelse {
+            std.debug.print("Unsupported file type: {s}\n", .{sym.path});
+            continue;
+        };
+        parser.setLanguage(language) catch |err| {
+            std.debug.print("Error setting language: {}\n", .{err});
+            continue;
+        };
+        
+        const tree = parser.parseString(file_content, null);
+        if (tree) |t| {
+            defer t.destroy();
+            
+            const root_node = t.rootNode();
+            
+            // Find the symbol node and extract its full context
+            if (findSymbolNode(root_node, sym.name, sym.line, file_content)) |symbol_node| {
+                // Extract documentation comments if any
+                if (extractDocumentation(symbol_node, file_content, allocator)) |docs| {
+                    defer allocator.free(docs);
+                    std.debug.print("{s}\n", .{docs});
+                }
+                
+                // Extract the full symbol definition
+                const start = symbol_node.startByte();
+                const end = symbol_node.endByte();
+                const definition = file_content[start..end];
+                
+                std.debug.print("{s}\n\n", .{definition});
+            } else {
+                std.debug.print("// Unable to extract full context\n\n", .{});
+            }
+        } else {
+            std.debug.print("// Error parsing file\n\n", .{});
+        }
+    }
+}
+
+fn findSymbolNode(node: tree_sitter.Node, target_name: []const u8, target_line: u32, source: []const u8) ?tree_sitter.Node {
+    const node_type = node.kind();
+    
+    // Check if this is a symbol node
+    if (isSymbolNode(node_type)) {
+        // Try to find the identifier
+        var i: u32 = 0;
+        while (i < node.childCount()) : (i += 1) {
+            if (node.child(i)) |child| {
+                const child_type = child.kind();
+                
+                // Special handling for Go spec nodes
+                if (std.mem.eql(u8, child_type, "type_spec") or
+                    std.mem.eql(u8, child_type, "const_spec") or
+                    std.mem.eql(u8, child_type, "var_spec")) {
+                    // Check inside the spec node
+                    var j: u32 = 0;
+                    while (j < child.childCount()) : (j += 1) {
+                        if (child.child(j)) |spec_child| {
+                            if (std.mem.eql(u8, spec_child.kind(), "identifier") or
+                                std.mem.eql(u8, spec_child.kind(), "type_identifier")) {
+                                const start = spec_child.startByte();
+                                const end = spec_child.endByte();
+                                const name = source[start..end];
+                                const line = spec_child.startPoint().row + 1;
+                                
+                                if (std.mem.eql(u8, name, target_name) and line == target_line) {
+                                    return node;
+                                }
+                            }
+                        }
+                    }
+                }
+                // Direct identifier check
+                else if (std.mem.eql(u8, child_type, "identifier") or
+                         std.mem.eql(u8, child_type, "type_identifier")) {
+                    const start = child.startByte();
+                    const end = child.endByte();
+                    const name = source[start..end];
+                    const line = child.startPoint().row + 1;
+                    
+                    if (std.mem.eql(u8, name, target_name) and line == target_line) {
+                        return node;
+                    }
+                }
+                // C function declarators
+                else if (std.mem.eql(u8, child_type, "function_declarator")) {
+                    if (extractIdentifierFromDeclarator(child, source)) |id| {
+                        if (std.mem.eql(u8, id.name, target_name) and id.line == target_line) {
+                            return node;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Special case for Python assignments
+    if (std.mem.eql(u8, node_type, "assignment")) {
+        if (node.child(0)) |left| {
+            if (std.mem.eql(u8, left.kind(), "identifier")) {
+                const start = left.startByte();
+                const end = left.endByte();
+                const name = source[start..end];
+                const line = left.startPoint().row + 1;
+                
+                if (std.mem.eql(u8, name, target_name) and line == target_line) {
+                    return node;
+                }
+            }
+        }
+    }
+    
+    // Recurse through children
+    var i: u32 = 0;
+    while (i < node.childCount()) : (i += 1) {
+        if (node.child(i)) |child| {
+            if (findSymbolNode(child, target_name, target_line, source)) |found| {
+                return found;
+            }
+        }
+    }
+    
+    return null;
+}
+
+fn extractDocumentation(node: tree_sitter.Node, source: []const u8, allocator: std.mem.Allocator) ?[]u8 {
+    var docs = std.ArrayList(u8).init(allocator);
+    defer docs.deinit();
+    
+    // Collect all consecutive comment nodes preceding the symbol
+    var current_sibling = node.prevSibling();
+    var comments_found = false;
+    
+    // We'll collect comments in reverse order then reverse the result
+    var comment_nodes = std.ArrayList(tree_sitter.Node).init(allocator);
+    defer comment_nodes.deinit();
+    
+    while (current_sibling) |sibling| {
+        const sibling_type = sibling.kind();
+        if (std.mem.eql(u8, sibling_type, "comment") or
+            std.mem.eql(u8, sibling_type, "line_comment") or
+            std.mem.eql(u8, sibling_type, "block_comment") or
+            std.mem.eql(u8, sibling_type, "doc_comment")) {
+            comment_nodes.append(sibling) catch break;
+            comments_found = true;
+            current_sibling = sibling.prevSibling();
+        } else {
+            // Stop if we hit a non-comment node
+            break;
+        }
+    }
+    
+    if (!comments_found) {
+        // Check parent node for documentation (some languages attach docs to parent)
+        if (node.parent()) |parent| {
+            current_sibling = parent.prevSibling();
+            while (current_sibling) |sibling| {
+                const sibling_type = sibling.kind();
+                if (std.mem.eql(u8, sibling_type, "comment") or
+                    std.mem.eql(u8, sibling_type, "line_comment") or
+                    std.mem.eql(u8, sibling_type, "block_comment") or
+                    std.mem.eql(u8, sibling_type, "doc_comment")) {
+                    comment_nodes.append(sibling) catch break;
+                    comments_found = true;
+                    current_sibling = sibling.prevSibling();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    
+    if (!comments_found) return null;
+    
+    // Process comments in the correct order (reverse of how we collected them)
+    var i = comment_nodes.items.len;
+    while (i > 0) {
+        i -= 1;
+        const comment_node = comment_nodes.items[i];
+        const start = comment_node.startByte();
+        const end = comment_node.endByte();
+        const comment_text = source[start..end];
+        
+        if (docs.items.len > 0) {
+            docs.append('\n') catch return null;
+        }
+        docs.appendSlice(comment_text) catch return null;
+    }
+    
+    return docs.toOwnedSlice() catch null;
 }
 
 const DatabaseContext = struct {

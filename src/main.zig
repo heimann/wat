@@ -75,8 +75,18 @@ pub fn main() !void {
         }
         try indexCommand(allocator, args[2]);
     } else if (std.mem.eql(u8, args[1], "find")) {
-        if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
-            try stderr.print("Usage: {s} find <symbol> [options]\n\n", .{args[0]});
+        // Check for --help or --interactive first
+        var is_interactive = false;
+        for (args[2..]) |arg| {
+            if (std.mem.eql(u8, arg, "--interactive")) {
+                is_interactive = true;
+                break;
+            }
+        }
+        
+        if ((args.len < 3 and !is_interactive) or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
+            try stderr.print("Usage: {s} find <symbol> [options]\n", .{args[0]});
+            try stderr.print("       {s} find --interactive [options]\n\n", .{args[0]});
             try stderr.print("Options:\n", .{});
             try stderr.print("  --with-context   Show the line of code containing the symbol\n", .{});
             try stderr.print("  --with-refs      Show count of references to the symbol\n", .{});
@@ -88,6 +98,9 @@ pub fn main() !void {
             try stderr.print("                   smart: show for fuzzy matches only (default)\n", .{});
             try stderr.print("                   always: always show match type column\n", .{});
             try stderr.print("                   never: never show match type column\n", .{});
+            try stderr.print("  --interactive    Launch interactive fuzzy finder\n", .{});
+            try stderr.print("  --action <cmd>   Custom action for interactive mode (default: $EDITOR)\n", .{});
+            try stderr.print("                   Placeholders: {{file}}, {{line}}, {{name}}\n", .{});
             try stderr.print("  --help           Show this help message\n", .{});
             try stderr.print("\nNote: Fuzzy matching is automatically used when no exact matches are found.\n", .{});
             try stderr.print("      Use --strict to disable this behavior.\n", .{});
@@ -101,9 +114,12 @@ pub fn main() !void {
         var fuzzy = false;
         var strict = false;
         var match_info: MatchInfoMode = .smart;
+        var interactive = false;
+        var action_template: ?[]const u8 = null;
         
-        // Parse flags
-        var i: usize = 3;
+        // Parse flags - start from 2 if --interactive, else from 3
+        const start_idx: usize = if (is_interactive) 2 else 3;
+        var i: usize = start_idx;
         while (i < args.len) : (i += 1) {
             if (std.mem.eql(u8, args[i], "--with-context")) {
                 with_context = true;
@@ -129,10 +145,38 @@ pub fn main() !void {
                     try stderr.print("Invalid --match-info value: {s}. Use 'smart', 'always', or 'never'\n", .{args[i]});
                     return;
                 }
+            } else if (std.mem.eql(u8, args[i], "--interactive")) {
+                interactive = true;
+            } else if (std.mem.eql(u8, args[i], "--action") and i + 1 < args.len) {
+                i += 1;
+                action_template = args[i];
             }
         }
         
-        try findCommand(allocator, args[2], with_context, with_refs, full_context, with_deps, fuzzy, strict, match_info);
+        // Handle interactive mode
+        if (interactive) {
+            const interactive_mod = @import("interactive.zig");
+            
+            var db = try Database.init("wat.db");
+            defer db.deinit();
+            
+            const editor_env = std.process.getEnvVarOwned(allocator, "EDITOR") catch null;
+            defer if (editor_env) |e| allocator.free(e);
+            
+            const action = action_template orelse editor_env orelse "vim +{line} {file}";
+            
+            var finder = try interactive_mod.InteractiveFinder.init(allocator, &db, action);
+            defer finder.deinit();
+            
+            const selected = try finder.run();
+            if (selected) |action_info| {
+                try action_info.execute(allocator);
+            }
+            return;
+        }
+        
+        const symbol_name = if (is_interactive) "" else args[2];
+        try findCommand(allocator, symbol_name, with_context, with_refs, full_context, with_deps, fuzzy, strict, match_info);
     } else if (std.mem.eql(u8, args[1], "refs")) {
         if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
             try stderr.print("Usage: {s} refs <symbol> [options]\n\n", .{args[0]});
@@ -786,9 +830,12 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_conte
             }
             
             // Print standard fields
-            try stdout.print("{s}\t{s}\t{d}\t{s}", 
-                .{ match.symbol.name, match.symbol.path, 
-                   match.symbol.line, match.symbol.node_type });
+            try stdout.print("{s}\t{s}\t{d}\t{s}", .{ 
+                match.symbol.name, 
+                match.symbol.path, 
+                match.symbol.line, 
+                match.symbol.node_type 
+            });
             
             // Add reference count if requested
             if (with_refs) {

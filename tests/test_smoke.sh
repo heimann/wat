@@ -7,8 +7,9 @@ set -e
 
 echo "Running wat smoke test..."
 
-# Expected output (sorted for comparison)
-EXPECTED=$(cat <<'EOF'
+echo "Testing Zig support..."
+# Expected output for Zig (sorted for comparison)
+EXPECTED_ZIG=$(cat <<'EOF'
 InvalidInput	34	error_set_declaration
 MyError	33	variable_declaration
 Point	5	variable_declaration
@@ -22,22 +23,57 @@ std	1	variable_declaration
 EOF
 )
 
-# Run wat on the test fixture and sort output
-ACTUAL=$(./zig-out/bin/wat tests/fixtures/simple.zig 2>&1 | sort)
+# Run wat on the Zig test fixture and sort output
+ACTUAL_ZIG=$(./zig-out/bin/wat tests/fixtures/simple.zig 2>&1 | sort)
 
 # Sort expected output for comparison
-EXPECTED_SORTED=$(echo "$EXPECTED" | sort)
+EXPECTED_ZIG_SORTED=$(echo "$EXPECTED_ZIG" | sort)
 
-# Compare outputs
-if [ "$ACTUAL" = "$EXPECTED_SORTED" ]; then
-    echo "✓ Test passed: Symbol extraction works correctly"
-    exit 0
+# Compare Zig outputs
+if [ "$ACTUAL_ZIG" = "$EXPECTED_ZIG_SORTED" ]; then
+    echo "✓ Zig test passed"
 else
-    echo "✗ Test failed: Output mismatch"
+    echo "✗ Zig test failed: Output mismatch"
     echo "Expected:"
-    echo "$EXPECTED_SORTED"
+    echo "$EXPECTED_ZIG_SORTED"
     echo ""
     echo "Actual:"
-    echo "$ACTUAL"
+    echo "$ACTUAL_ZIG"
     exit 1
 fi
+
+echo "Testing Go support..."
+# Expected output for Go (sorted for comparison)
+EXPECTED_GO=$(cat <<'EOF'
+Point	7	type_declaration
+Status	20	type_declaration
+StatusError	24	const_declaration
+StatusOK	23	const_declaration
+VERSION	5	const_declaration
+add	12	function_declaration
+globalConfig	27	var_declaration
+main	16	function_declaration
+EOF
+)
+
+# Run wat on the Go test fixture and sort output
+ACTUAL_GO=$(./zig-out/bin/wat tests/fixtures/simple.go 2>&1 | sort)
+
+# Sort expected output for comparison
+EXPECTED_GO_SORTED=$(echo "$EXPECTED_GO" | sort)
+
+# Compare Go outputs
+if [ "$ACTUAL_GO" = "$EXPECTED_GO_SORTED" ]; then
+    echo "✓ Go test passed"
+else
+    echo "✗ Go test failed: Output mismatch"
+    echo "Expected:"
+    echo "$EXPECTED_GO_SORTED"
+    echo ""
+    echo "Actual:"
+    echo "$ACTUAL_GO"
+    exit 1
+fi
+
+echo "✓ All tests passed: Symbol extraction works correctly for all languages"
+exit 0

@@ -82,24 +82,46 @@ zig build
 # Show what a symbol depends on
 ./zig-out/bin/wat deps processFile
 ./zig-out/bin/wat deps Database
+
+# Show call tree structure of the application
+./zig-out/bin/wat map
+./zig-out/bin/wat map --entry processFile --depth 3
+./zig-out/bin/wat map --entry main --depth 5
 ```
 
-## Usage (Future)
+## Advanced Features
+
+### Call Tree Visualization
+
+The `wat map` command shows the call hierarchy of your application:
 
 ```bash
-# Index a project
-wat index .
+# Show full call tree starting from main()
+./zig-out/bin/wat map
 
-# Query symbols
-wat find MyFunction
-wat refs MyStruct
-wat context parseConfig --lines=10
-wat deps parseConfig
+# Start from a specific function
+./zig-out/bin/wat map --entry processFile
 
-# Language auto-detection
-wat *.rs  # Rust files
-wat *.go  # Go files
-wat *.ts  # TypeScript files
+# Limit depth to avoid deep recursion
+./zig-out/bin/wat map --depth 3
+
+# Combine options
+./zig-out/bin/wat map --entry handleRequest --depth 5
+```
+
+Example output:
+```
+Call Map:
+============================================================
+main()
+│  ├─ parseArgs()
+│  ├─ Database.init()
+│  │  ├─ sqlite3_open()
+│  │  └─ createTables()
+│  └─ processCommand()
+│     ├─ indexDirectory()
+│     │  └─ processFile()
+│     └─ findSymbol()
 ```
 
 ## Current Status
@@ -120,6 +142,7 @@ wat *.ts  # TypeScript files
 - Ability to include/exclude definitions in reference results
 - `wat context` command shows full symbol definitions with documentation comments
 - `wat deps` command analyzes and displays symbol dependencies
+- `wat map` command shows call tree structure of the application
 
 ## Roadmap
 

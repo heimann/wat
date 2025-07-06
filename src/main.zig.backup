@@ -104,23 +104,6 @@ pub fn main() !void {
             return;
         }
         try depsCommand(allocator, args[2]);
-    } else if (std.mem.eql(u8, args[1], "map")) {
-        var entry_point: ?[]const u8 = null;
-        var max_depth: u32 = 5; // default depth
-        
-        // Parse options
-        var i: usize = 2;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--entry") and i + 1 < args.len) {
-                entry_point = args[i + 1];
-                i += 1;
-            } else if (std.mem.eql(u8, args[i], "--depth") and i + 1 < args.len) {
-                max_depth = try std.fmt.parseInt(u32, args[i + 1], 10);
-                i += 1;
-            }
-        }
-        
-        try mapCommand(allocator, entry_point, max_depth);
     } else {
         // Default: process single file
         const file_path = args[1];
@@ -419,7 +402,7 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize, debu
                                     const n_end = name_node.endByte();
                                     const name = source[n_start..n_end];
                                     const line = name_node.startPoint().row + 1;
-                                    stdout.print("{s}\t{d}\t{s}\n", .{ name, line, call_type }) catch {};
+                                    std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, call_type });
                                 } else if (std.mem.eql(u8, name_node.kind(), "identifier") or
                                            std.mem.eql(u8, name_node.kind(), "atom")) {
                                     const n_start = name_node.startByte();
@@ -430,7 +413,7 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize, debu
                                         name = name[1..];
                                     }
                                     const line = name_node.startPoint().row + 1;
-                                    stdout.print("{s}\t{d}\t{s}\n", .{ name, line, call_type }) catch {};
+                                    std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, call_type });
                                 } else if (std.mem.eql(u8, name_node.kind(), "call")) {
                                     // Function definitions with pattern matching
                                     if (name_node.child(0)) |func_name| {
@@ -439,7 +422,7 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize, debu
                                             const n_end = func_name.endByte();
                                             const name = source[n_start..n_end];
                                             const line = func_name.startPoint().row + 1;
-                                            stdout.print("{s}\t{d}\t{s}\n", .{ name, line, call_type }) catch {};
+                                            std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, call_type });
                                         }
                                     }
                                 }
@@ -490,7 +473,7 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize, debu
                                                         }
                                                         
                                                         const line = attr_child.startPoint().row + 1;
-                                                        stdout.print("{s}\t{d}\tid_attribute\n", .{ id_value, line }) catch {};
+                                                        std.debug.print("{s}\t{d}\tid_attribute\n", .{ id_value, line });
                                                         break;
                                                     }
                                                 }
@@ -524,7 +507,6 @@ fn printUsage(program_name: []const u8) void {
     stdout.print("  {s} refs <symbol> [--with-context] [--include-defs]  Find references to symbol\n", .{program_name}) catch {};
     stdout.print("  {s} context <symbol>                         Show full context of symbol with documentation\n", .{program_name}) catch {};
     stdout.print("  {s} deps <symbol>                            Show dependencies of symbol\n", .{program_name}) catch {};
-    stdout.print("  {s} map [--entry <symbol>] [--depth <n>]     Show call tree structure\n", .{program_name}) catch {};
     stdout.print("\nOptions for refs:\n", .{}) catch {};
     stdout.print("  --with-context   Show the line of code containing each reference\n", .{}) catch {};
     stdout.print("  --include-defs   Include symbol definitions in the results\n", .{}) catch {};
@@ -540,7 +522,7 @@ fn processFile(allocator: std.mem.Allocator, file_path: []const u8, debug_mode: 
 
     // Detect language based on file extension
     const language = detectLanguage(file_path) orelse {
-        stderr.print("Unsupported file type: {s}\n", .{file_path}) catch {};
+        std.debug.print("Unsupported file type: {s}\n", .{file_path});
         return;
     };
     try parser.setLanguage(language);
@@ -583,7 +565,7 @@ fn processFile(allocator: std.mem.Allocator, file_path: []const u8, debug_mode: 
             try extractSymbols(root_node, file_content, 0, debug_mode);
         }
     } else {
-        stderr.print("Failed to parse file\n", .{}) catch {};
+        std.debug.print("Failed to parse file\n", .{});
     }
 }
 
@@ -606,7 +588,7 @@ fn indexCommand(allocator: std.mem.Allocator, path: []const u8) !void {
     var db = try Database.init("wat.db");
     defer db.deinit();
     
-    stdout.print("Indexing directory: {s}\n", .{path}) catch {};
+    std.debug.print("Indexing directory: {s}\n", .{path});
     
     try db.beginTransaction();
     errdefer db.rollback() catch {};
@@ -615,7 +597,7 @@ fn indexCommand(allocator: std.mem.Allocator, path: []const u8) !void {
     try indexDirectory(allocator, path, &db, &indexed_count);
     
     try db.commit();
-    stdout.print("Indexed {d} files\n", .{indexed_count}) catch {};
+    std.debug.print("Indexed {d} files\n", .{indexed_count});
 }
 
 fn indexDirectory(allocator: std.mem.Allocator, path: []const u8, db: *Database, count: *u32) !void {
@@ -649,9 +631,9 @@ fn indexDirectory(allocator: std.mem.Allocator, path: []const u8, db: *Database,
                     const last_modified = @as(i64, @intCast(@divFloor(stat.mtime, std.time.ns_per_s)));
                     
                     if (try db.needsReindex(full_path, last_modified)) {
-                        stdout.print("Indexing: {s}\n", .{full_path}) catch {};
+                        std.debug.print("Indexing: {s}\n", .{full_path});
                         processFile(allocator, full_path, false, db) catch |err| {
-                            stderr.print("Error indexing {s}: {}\n", .{ full_path, err }) catch {};
+                            std.debug.print("Error indexing {s}: {}\n", .{ full_path, err });
                             continue;
                         };
                         count.* += 1;
@@ -671,13 +653,13 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
     defer @import("database.zig").deinitSymbols(symbols, allocator);
     
     if (symbols.len == 0) {
-        stderr.print("Symbol '{s}' not found\n", .{symbol_name}) catch {};
+        std.debug.print("Symbol '{s}' not found\n", .{symbol_name});
         return;
     }
     
     // Print in ctags format
     for (symbols) |sym| {
-        stdout.print("{s}\t{s}\t{d}\t{s}\n", .{ sym.name, sym.path, sym.line, sym.node_type }) catch {};
+        std.debug.print("{s}\t{s}\t{d}\t{s}\n", .{ sym.name, sym.path, sym.line, sym.node_type });
     }
 }
 
@@ -689,26 +671,26 @@ fn refsCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_conte
     defer @import("database.zig").deinitReferences(references, allocator);
     
     if (references.len == 0) {
-        stderr.print("No references to '{s}' found\n", .{symbol_name}) catch {};
+        std.debug.print("No references to '{s}' found\n", .{symbol_name});
         return;
     }
     
     // Print header
     if (include_defs) {
-        stdout.print("References and definitions of '{s}':\n", .{symbol_name}) catch {};
+        std.debug.print("References and definitions of '{s}':\n", .{symbol_name});
     } else {
-        stdout.print("References to '{s}':\n", .{symbol_name}) catch {};
+        std.debug.print("References to '{s}':\n", .{symbol_name});
     }
     
     // Print references
     for (references) |ref| {
         if (ref.is_definition) {
-            stdout.print("[DEF] ", .{}) catch {};
+            std.debug.print("[DEF] ", .{});
         }
         
         if (with_context and ref.context != null) {
-            stdout.print("{s}:{d}:{d}\n", .{ ref.path, ref.line, ref.column }) catch {};
-            stdout.print("    {s}\n", .{ref.context.?}) catch {};
+            std.debug.print("{s}:{d}:{d}\n", .{ ref.path, ref.line, ref.column });
+            std.debug.print("    {s}\n", .{ref.context.?});
             
             // Print a caret under the column position
             if (ref.column > 0) {
@@ -726,17 +708,17 @@ fn refsCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_conte
                 // Print spaces followed by carets for the length of the symbol
                 var j: usize = 0;
                 while (j < spaces) : (j += 1) {
-                    stdout.print(" ", .{}) catch {};
+                    std.debug.print(" ", .{});
                 }
                 // Print carets for the length of the symbol name
                 j = 0;
                 while (j < symbol_name.len) : (j += 1) {
-                    stdout.print("^", .{}) catch {};
+                    std.debug.print("^", .{});
                 }
-                stdout.print("\n", .{}) catch {};
+                std.debug.print("\n", .{});
             }
         } else {
-            stdout.print("{s}:{d}:{d}\n", .{ ref.path, ref.line, ref.column }) catch {};
+            std.debug.print("{s}:{d}:{d}\n", .{ ref.path, ref.line, ref.column });
         }
     }
 }
@@ -750,18 +732,18 @@ fn contextCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
     defer @import("database.zig").deinitSymbols(symbols, allocator);
     
     if (symbols.len == 0) {
-        stderr.print("Symbol '{s}' not found\n", .{symbol_name}) catch {};
+        std.debug.print("Symbol '{s}' not found\n", .{symbol_name});
         return;
     }
     
     // For each symbol definition, extract full context
     for (symbols) |sym| {
-        stdout.print("// {s} ({s}) at {s}:{d}\n", .{ sym.name, sym.node_type, sym.path, sym.line }) catch {};
-        stdout.print("// " ++ "=" ** 60 ++ "\n", .{}) catch {};
+        std.debug.print("// {s} ({s}) at {s}:{d}\n", .{ sym.name, sym.node_type, sym.path, sym.line });
+        std.debug.print("// " ++ "=" ** 60 ++ "\n", .{});
         
         // Read the file content
         const file_content = std.fs.cwd().readFileAlloc(allocator, sym.path, 1024 * 1024 * 10) catch |err| {
-            stderr.print("Error reading file {s}: {}\n", .{ sym.path, err }) catch {};
+            std.debug.print("Error reading file {s}: {}\n", .{ sym.path, err });
             continue;
         };
         defer allocator.free(file_content);
@@ -771,11 +753,11 @@ fn contextCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
         defer parser.destroy();
         
         const language = detectLanguage(sym.path) orelse {
-            stderr.print("Unsupported file type: {s}\n", .{sym.path}) catch {};
+            std.debug.print("Unsupported file type: {s}\n", .{sym.path});
             continue;
         };
         parser.setLanguage(language) catch |err| {
-            stderr.print("Error setting language: {}\n", .{err}) catch {};
+            std.debug.print("Error setting language: {}\n", .{err});
             continue;
         };
         
@@ -790,7 +772,7 @@ fn contextCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
                 // Extract documentation comments if any
                 if (extractDocumentation(symbol_node, file_content, allocator)) |docs| {
                     defer allocator.free(docs);
-                    stdout.print("{s}\n", .{docs}) catch {};
+                    std.debug.print("{s}\n", .{docs});
                 }
                 
                 // Extract the full symbol definition
@@ -798,12 +780,12 @@ fn contextCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
                 const end = symbol_node.endByte();
                 const definition = file_content[start..end];
                 
-                stdout.print("{s}\n\n", .{definition}) catch {};
+                std.debug.print("{s}\n\n", .{definition});
             } else {
-                stdout.print("// Unable to extract full context\n\n", .{}) catch {};
+                std.debug.print("// Unable to extract full context\n\n", .{});
             }
         } else {
-            stderr.print("// Error parsing file\n\n", .{}) catch {};
+            std.debug.print("// Error parsing file\n\n", .{});
         }
     }
 }
@@ -1082,201 +1064,22 @@ fn depsCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
     defer @import("database.zig").deinitDependencies(dependencies, allocator);
     
     if (dependencies.len == 0) {
-        stderr.print("No dependencies found for '{s}'\n", .{symbol_name}) catch {};
+        std.debug.print("No dependencies found for '{s}'\n", .{symbol_name});
         return;
     }
     
     // Group dependencies by type
-    stdout.print("Dependencies of '{s}':\n", .{symbol_name}) catch {};
-    stdout.print("=" ** 40 ++ "\n", .{}) catch {};
+    std.debug.print("Dependencies of '{s}':\n", .{symbol_name});
+    std.debug.print("=" ** 40 ++ "\n", .{});
     
     var current_type: ?[]const u8 = null;
     for (dependencies) |dep| {
         if (current_type == null or !std.mem.eql(u8, current_type.?, dep.dependency_type)) {
             current_type = dep.dependency_type;
-            stdout.print("\n{s}:\n", .{dep.dependency_type}) catch {};
+            std.debug.print("\n{s}:\n", .{dep.dependency_type});
         }
-        stdout.print("  - {s}\n", .{dep.depends_on}) catch {};
+        std.debug.print("  - {s}\n", .{dep.depends_on});
     }
-}
-
-fn mapCommand(allocator: std.mem.Allocator, entry_point: ?[]const u8, max_depth: u32) !void {
-    var db = try Database.init("wat.db");
-    defer db.deinit();
-    
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const arena_allocator = arena.allocator();
-    
-    // Find entry points
-    var symbols_to_process = std.ArrayList(MapNode).init(arena_allocator);
-    defer symbols_to_process.deinit();
-    
-    if (entry_point) |ep| {
-        // Start from specified entry point
-        const symbols = try db.findSymbol(ep, arena_allocator);
-        if (symbols.len == 0) {
-            stderr.print("Entry point '{s}' not found\n", .{ep}) catch {};
-            return;
-        }
-        
-        for (symbols) |sym| {
-            try symbols_to_process.append(.{
-                .symbol = sym.name,
-                .signature = try extractSignature(arena_allocator, &db, sym),
-                .depth = 0,
-            });
-        }
-    } else {
-        // Find main functions
-        const entry_points = try db.findEntryPoints(arena_allocator);
-        if (entry_points.len == 0) {
-            stderr.print("No entry points found (looking for 'main' functions)\n", .{}) catch {};
-            return;
-        }
-        
-        for (entry_points) |sym| {
-            try symbols_to_process.append(.{
-                .symbol = sym.name,
-                .signature = try extractSignature(arena_allocator, &db, sym),
-                .depth = 0,
-            });
-        }
-    }
-    
-    // Print header
-    stdout.print("Call Map:\n", .{}) catch {};
-    stdout.print("=" ** 60 ++ "\n", .{}) catch {};
-    
-    // Process call tree
-    var call_stack = std.ArrayList([]const u8).init(arena_allocator);
-    defer call_stack.deinit();
-    
-    for (symbols_to_process.items) |node| {
-        try printCallTree(arena_allocator, &db, node.symbol, node.signature, 0, max_depth, &call_stack);
-    }
-}
-
-const MapNode = struct {
-    symbol: []const u8,
-    signature: ?[]const u8,
-    depth: u32,
-};
-
-fn printCallTree(
-    allocator: std.mem.Allocator,
-    db: *Database,
-    symbol: []const u8,
-    signature: ?[]const u8,
-    depth: u32,
-    max_depth: u32,
-    call_stack: *std.ArrayList([]const u8),
-) !void {
-    // Check if already in current call stack to detect cycles
-    var is_cycle = false;
-    for (call_stack.items) |stack_symbol| {
-        if (std.mem.eql(u8, stack_symbol, symbol)) {
-            is_cycle = true;
-            break;
-        }
-    }
-    
-    // Add to call stack
-    if (!is_cycle) {
-        try call_stack.append(symbol);
-    }
-    
-    // Print indentation
-    var i: u32 = 0;
-    while (i < depth) : (i += 1) {
-        stdout.print("│  ", .{}) catch {};
-    }
-    
-    if (depth > 0) {
-        stdout.print("├─ ", .{}) catch {};
-    }
-    
-    // Print symbol with signature
-    if (signature) |sig| {
-        stdout.print("{s}{s}", .{ symbol, sig }) catch {};
-    } else {
-        stdout.print("{s}", .{symbol}) catch {};
-    }
-    
-    if (is_cycle) {
-        stdout.print(" (cycle detected)\n", .{}) catch {};
-        return;
-    }
-    
-    stdout.print("\n", .{}) catch {};
-    
-    // Check depth limit
-    if (depth >= max_depth) {
-        i = 0;
-        while (i <= depth) : (i += 1) {
-            stdout.print("│  ", .{}) catch {};
-        }
-        stdout.print("└─ ...\n", .{}) catch {};
-        if (!is_cycle) {
-            _ = call_stack.pop();
-        }
-        return;
-    }
-    
-    // If it's a cycle, don't process further
-    if (is_cycle) {
-        return;
-    }
-    
-    // Get dependencies
-    const dependencies = db.findDependencies(symbol, allocator) catch {
-        _ = call_stack.pop();
-        return;
-    };
-    defer @import("database.zig").deinitDependencies(dependencies, allocator);
-    
-    // Filter and collect function calls
-    var calls = std.ArrayList([]const u8).init(allocator);
-    defer calls.deinit();
-    
-    for (dependencies) |dep| {
-        if (std.mem.eql(u8, dep.dependency_type, "calls")) {
-            try calls.append(dep.depends_on);
-        }
-    }
-    
-    // Process function calls
-    for (calls.items) |call| {
-        // Try to get signature for the dependency
-        const dep_symbols = db.findSymbol(call, allocator) catch {
-            try printCallTree(allocator, db, call, null, depth + 1, max_depth, call_stack);
-            continue;
-        };
-        defer @import("database.zig").deinitSymbols(dep_symbols, allocator);
-        
-        if (dep_symbols.len > 0) {
-            const dep_sig = extractSignature(allocator, db, dep_symbols[0]) catch null;
-            try printCallTree(allocator, db, call, dep_sig, depth + 1, max_depth, call_stack);
-        } else {
-            try printCallTree(allocator, db, call, null, depth + 1, max_depth, call_stack);
-        }
-    }
-    
-    // Pop from call stack when done
-    _ = call_stack.pop();
-}
-
-fn extractSignature(allocator: std.mem.Allocator, _: *Database, symbol: @import("database.zig").Symbol) !?[]const u8 {
-    // For now, return a simple signature based on node type
-    // In the future, we could parse the actual signature from the source
-    if (std.mem.eql(u8, symbol.node_type, "function_declaration") or
-        std.mem.eql(u8, symbol.node_type, "function_definition")) {
-        return try allocator.dupe(u8, "()");
-    } else if (std.mem.eql(u8, symbol.node_type, "method_declaration") or
-               std.mem.eql(u8, symbol.node_type, "method_definition")) {
-        return try allocator.dupe(u8, "()");
-    }
-    return null;
 }
 
 const DatabaseContext = struct {

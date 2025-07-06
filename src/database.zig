@@ -3,6 +3,9 @@ const c = @cImport({
     @cInclude("sqlite3.h");
 });
 
+// Writer for error output
+const stderr = std.io.getStdErr().writer();
+
 const DatabaseError = error{
     OpenFailed,
     PrepareFailed,
@@ -22,7 +25,7 @@ pub const Database = struct {
         const result = c.sqlite3_open(path.ptr, &db);
         if (result != c.SQLITE_OK) {
             if (db) |d| {
-                std.debug.print("SQLite error: {s}\n", .{c.sqlite3_errmsg(d)});
+                stderr.print("SQLite error: {s}\n", .{c.sqlite3_errmsg(d)}) catch {};
                 _ = c.sqlite3_close(d);
             }
             return DatabaseError.OpenFailed;
@@ -101,7 +104,7 @@ pub const Database = struct {
         );
         
         if (result != c.SQLITE_OK) {
-            std.debug.print("SQL error: {s}\n", .{err_msg});
+            stderr.print("SQL error: {s}\n", .{err_msg}) catch {};
             c.sqlite3_free(err_msg);
             return DatabaseError.ExecuteFailed;
         }
@@ -407,6 +410,88 @@ pub const Database = struct {
         }
     }
     
+    pub fn getSymbolWithSignature(self: Self, symbol_id: i64, allocator: std.mem.Allocator) !?SymbolWithSignature {
+        const sql = 
+            \\SELECT s.name, s.line, s.node_type, f.path
+            \\FROM symbols s
+            \\JOIN files f ON s.file_id = f.id
+            \\WHERE s.id = ?
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_int64(stmt, 1, symbol_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const name = std.mem.span(c.sqlite3_column_text(stmt, 0));
+            const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
+            const node_type = std.mem.span(c.sqlite3_column_text(stmt, 2));
+            const path = std.mem.span(c.sqlite3_column_text(stmt, 3));
+            
+            return SymbolWithSignature{
+                .id = symbol_id,
+                .name = try allocator.dupe(u8, name),
+                .line = line,
+                .node_type = try allocator.dupe(u8, node_type),
+                .path = try allocator.dupe(u8, path),
+                .signature = null, // Will be filled later
+            };
+        }
+        
+        return null;
+    }
+    
+    pub fn findEntryPoints(self: Self, allocator: std.mem.Allocator) ![]Symbol {
+        const sql = 
+            \\SELECT s.name, s.line, s.node_type, f.path
+            \\FROM symbols s
+            \\JOIN files f ON s.file_id = f.id
+            \\WHERE s.name = 'main' OR s.name LIKE 'pub %'
+            \\ORDER BY s.name
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        const result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        var symbols = std.ArrayList(Symbol).init(allocator);
+        errdefer symbols.deinit();
+        
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const name = std.mem.span(c.sqlite3_column_text(stmt, 0));
+            const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
+            const node_type = std.mem.span(c.sqlite3_column_text(stmt, 2));
+            const path = std.mem.span(c.sqlite3_column_text(stmt, 3));
+            
+            // For now, only include actual main functions
+            if (std.mem.eql(u8, name, "main")) {
+                try symbols.append(.{
+                    .name = try allocator.dupe(u8, name),
+                    .line = line,
+                    .node_type = try allocator.dupe(u8, node_type),
+                    .path = try allocator.dupe(u8, path),
+                });
+            }
+        }
+        
+        return symbols.toOwnedSlice();
+    }
+    
     pub fn findDependencies(self: Self, symbol_name: []const u8, allocator: std.mem.Allocator) ![]Dependency {
         const sql = 
             \\SELECT DISTINCT d.depends_on, d.dependency_type
@@ -536,6 +621,24 @@ pub const Dependency = struct {
     pub fn deinit(self: *Dependency, allocator: std.mem.Allocator) void {
         allocator.free(self.depends_on);
         allocator.free(self.dependency_type);
+    }
+};
+
+pub const SymbolWithSignature = struct {
+    id: i64,
+    name: []const u8,
+    line: u32,
+    node_type: []const u8,
+    path: []const u8,
+    signature: ?[]const u8,
+    
+    pub fn deinit(self: *SymbolWithSignature, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.node_type);
+        allocator.free(self.path);
+        if (self.signature) |sig| {
+            allocator.free(sig);
+        }
     }
 };
 

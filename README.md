@@ -152,6 +152,129 @@ This project is in early development. Key areas for contribution:
 - Performance optimizations
 - Query interface design
 
+### Adding a New Language
+
+To add support for a new language, follow these steps:
+
+#### 1. Find the Grammar
+
+First, get the latest tree-sitter grammar for your language:
+
+```bash
+# Find the latest release
+gh api repos/tree-sitter/tree-sitter-LANGUAGE/releases/latest | jq -r '.tag_name'
+
+# Get the commit hash for that release
+gh api repos/tree-sitter/tree-sitter-LANGUAGE/git/refs/tags/TAG | jq -r '.object.sha'
+```
+
+#### 2. Add Grammar Dependency
+
+Add the grammar to `build.zig.zon`:
+
+```zig
+.tree_sitter_language = .{
+    .url = "git+https://github.com/tree-sitter/tree-sitter-LANGUAGE#COMMIT_HASH",
+    // Leave hash empty for now
+},
+```
+
+#### 3. Update Build Configuration
+
+Add to `build.zig`:
+
+```zig
+const tree_sitter_language = b.dependency("tree_sitter_language", .{});
+exe.addCSourceFile(.{
+    .file = tree_sitter_language.path("src/parser.c"),
+    .flags = &.{"-std=c11"},
+});
+// Check if the language has a scanner.c file (for languages like Python)
+// If so, add it too:
+exe.addCSourceFile(.{
+    .file = tree_sitter_language.path("src/scanner.c"),
+    .flags = &.{"-std=c11"},
+});
+exe.addIncludePath(tree_sitter_language.path("src"));
+```
+
+#### 4. Get the Hash
+
+Run `zig build --fetch` to get the hash, then update `build.zig.zon` with it.
+
+#### 5. Add Language Detection
+
+Update `src/main.zig`:
+
+```zig
+// Add extern declaration
+extern fn tree_sitter_language() callconv(.C) *tree_sitter.Language;
+
+// Add to detectLanguage function
+} else if (std.mem.endsWith(u8, file_path, ".ext")) {
+    return tree_sitter_language();
+```
+
+#### 6. Identify Node Types
+
+Create a test file and enable debug mode to see node types:
+
+```zig
+// Temporarily uncomment in extractSymbols:
+if (node.isNamed()) {
+    std.debug.print("DEBUG: {s}\n", .{node_type});
+}
+```
+
+Run: `./zig-out/bin/wat test.ext 2>&1 | grep "DEBUG:" | sort | uniq`
+
+#### 7. Add Symbol Extraction
+
+Add the language's node types to the symbol extraction in `extractSymbols`:
+
+```zig
+// Language node types
+std.mem.eql(u8, node_type, "function_declaration") or  // or whatever the language uses
+std.mem.eql(u8, node_type, "class_declaration") or
+```
+
+Some languages have special requirements:
+- **Go**: Uses spec nodes (`type_spec`, `const_spec`, `var_spec`)
+- **Python**: Uses `assignment` nodes for global variables
+- Check the grammar's structure and adapt accordingly
+
+#### 8. Create Test Fixture
+
+Create `tests/fixtures/simple.LANGUAGE` with examples of all symbol types the language supports.
+
+#### 9. Update Tests
+
+Add to `tests/test_smoke.sh`:
+
+```bash
+echo "Testing LANGUAGE support..."
+EXPECTED_LANGUAGE=$(cat <<'EOF'
+symbol1	LINE	NODE_TYPE
+symbol2	LINE	NODE_TYPE
+EOF
+)
+
+ACTUAL_LANGUAGE=$(./zig-out/bin/wat tests/fixtures/simple.LANGUAGE 2>&1 | sort)
+EXPECTED_LANGUAGE_SORTED=$(echo "$EXPECTED_LANGUAGE" | sort)
+
+if [ "$ACTUAL_LANGUAGE" = "$EXPECTED_LANGUAGE_SORTED" ]; then
+    echo "✓ LANGUAGE test passed"
+else
+    echo "✗ LANGUAGE test failed"
+    # ... error output
+    exit 1
+fi
+```
+
+#### 10. Test and Commit
+
+Run `make test` to ensure everything works, then commit with a descriptive message.
+
 ## License
 
 TODO: Add license

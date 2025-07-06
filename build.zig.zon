@@ -77,6 +77,10 @@
             .url = "git+https://github.com/elixir-lang/tree-sitter-elixir#86ec2ed45d6d9433b4e0b88cd3d96796bd45625f",
             .hash = "N-V-__8AAMc9zACnlNlsA6OYzJTNeUb5z3WdNue763diJ0gP",
         },
+        .tree_sitter_html = .{
+            .url = "git+https://github.com/tree-sitter/tree-sitter-html#5a5ca8551a179998360b4a4ca2c0f366a35acc03",
+            .hash = "N-V-__8AAPuKAwBRzMNBLGMBD0yI2N2oPf3jdMYqt9sMYUCi",
+        },
     },
     .paths = .{
         "build.zig",

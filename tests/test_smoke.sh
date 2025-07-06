@@ -351,5 +351,39 @@ else
     exit 1
 fi
 
+echo "Testing HTML support..."
+# Expected output for HTML (sorted for comparison)
+EXPECTED_HTML=$(cat <<'EOF'
+content	16	id_attribute
+feature-list	24	id_attribute
+features	22	id_attribute
+intro	17	id_attribute
+main-footer	37	id_attribute
+main-header	7	id_attribute
+navigation	9	id_attribute
+search-box	32	id_attribute
+sidebar	31	id_attribute
+EOF
+)
+
+# Run wat on the HTML test fixture and sort output
+ACTUAL_HTML=$(./zig-out/bin/wat tests/fixtures/simple.html 2>&1 | sort)
+
+# Sort expected output for comparison
+EXPECTED_HTML_SORTED=$(echo "$EXPECTED_HTML" | sort)
+
+# Compare HTML outputs
+if [ "$ACTUAL_HTML" = "$EXPECTED_HTML_SORTED" ]; then
+    echo "✓ HTML test passed"
+else
+    echo "✗ HTML test failed: Output mismatch"
+    echo "Expected:"
+    echo "$EXPECTED_HTML_SORTED"
+    echo ""
+    echo "Actual:"
+    echo "$ACTUAL_HTML"
+    exit 1
+fi
+
 echo "✓ All tests passed: Symbol extraction works correctly for all languages"
 exit 0

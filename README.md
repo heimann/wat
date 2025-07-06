@@ -98,7 +98,7 @@ wat *.ts  # TypeScript files
 - ✅ Elixir (v0.3.4) - modules, functions (def/defp), macros, protocols, implementations (includes scanner.c)
 - 📋 HTML - Planned
 
-Binary size: ~9.8MB (grows ~0.5-1.3MB per language)
+Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 
 ### Phase 3: Persistent Index
 - [ ] SQLite-based symbol database
@@ -352,12 +352,13 @@ If you're picking up development in a new Claude Code instance:
 ./zig-out/bin/wat tests/fixtures/simple.c    # Should work
 ./zig-out/bin/wat tests/fixtures/simple.java # Should work
 ./zig-out/bin/wat tests/fixtures/simple.ex   # Should work
+./zig-out/bin/wat tests/fixtures/simple.html # Should work
 
 # Run tests
-make test  # Should show all 9 languages passing
+make test  # Should show all 10 languages passing
 
 # Check binary size
-ls -lh ./zig-out/bin/wat  # Should be ~13MB with 9 languages
+ls -lh ./zig-out/bin/wat  # Should be ~14MB with 10 languages
 ```
 
 ### Next Steps

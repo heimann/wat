@@ -10,6 +10,7 @@ extern fn tree_sitter_rust() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_c() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_java() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_elixir() callconv(.C) *tree_sitter.Language;
+extern fn tree_sitter_html() callconv(.C) *tree_sitter.Language;
 
 fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
     if (std.mem.endsWith(u8, file_path, ".zig")) {
@@ -30,6 +31,8 @@ fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
         return tree_sitter_java();
     } else if (std.mem.endsWith(u8, file_path, ".ex") or std.mem.endsWith(u8, file_path, ".exs")) {
         return tree_sitter_elixir();
+    } else if (std.mem.endsWith(u8, file_path, ".html") or std.mem.endsWith(u8, file_path, ".htm")) {
+        return tree_sitter_html();
     }
     return null;
 }
@@ -402,6 +405,62 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize, debu
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+    
+    // Special handling for HTML elements with id attributes
+    if (std.mem.eql(u8, node_type, "element")) {
+        // Find start_tag child
+        var tag_idx: u32 = 0;
+        while (tag_idx < node.childCount()) : (tag_idx += 1) {
+            if (node.child(tag_idx)) |tag_child| {
+                if (std.mem.eql(u8, tag_child.kind(), "start_tag")) {
+                    // Look for attributes
+                    var attr_idx: u32 = 0;
+                    while (attr_idx < tag_child.childCount()) : (attr_idx += 1) {
+                        if (tag_child.child(attr_idx)) |attr| {
+                            if (std.mem.eql(u8, attr.kind(), "attribute")) {
+                                // Check if this is an id attribute
+                                if (attr.child(0)) |attr_name| {
+                                    if (std.mem.eql(u8, attr_name.kind(), "attribute_name")) {
+                                        const name_start = attr_name.startByte();
+                                        const name_end = attr_name.endByte();
+                                        const attr_name_str = source[name_start..name_end];
+                                        
+                                        if (std.mem.eql(u8, attr_name_str, "id")) {
+                                            // Get the attribute value - look through all children
+                                            var val_idx: u32 = 0;
+                                            while (val_idx < attr.childCount()) : (val_idx += 1) {
+                                                if (attr.child(val_idx)) |attr_child| {
+                                                    const child_kind = attr_child.kind();
+                                                    if (std.mem.eql(u8, child_kind, "attribute_value") or
+                                                        std.mem.eql(u8, child_kind, "quoted_attribute_value")) {
+                                                        const value_start = attr_child.startByte();
+                                                        const value_end = attr_child.endByte();
+                                                        var id_value = source[value_start..value_end];
+                                                        
+                                                        // Remove quotes if present
+                                                        if (id_value.len >= 2 and 
+                                                            (id_value[0] == '"' or id_value[0] == '\'') and
+                                                            (id_value[id_value.len - 1] == '"' or id_value[id_value.len - 1] == '\'')) {
+                                                            id_value = id_value[1..id_value.len - 1];
+                                                        }
+                                                        
+                                                        const line = attr_child.startPoint().row + 1;
+                                                        std.debug.print("{s}\t{d}\tid_attribute\n", .{ id_value, line });
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    break;
                 }
             }
         }

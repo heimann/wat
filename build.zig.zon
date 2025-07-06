@@ -49,6 +49,10 @@
             .url = "git+https://github.com/tree-sitter/tree-sitter-go#3c3775faa968158a8b4ac190a7fda867fd5fb748",
             .hash = "N-V-__8AAByNIQDR0efQX7qy2pZDQwNjFUwLmncLFdNdjQzm",
         },
+        .tree_sitter_python = .{
+            .url = "git+https://github.com/tree-sitter/tree-sitter-python#bffb65a8cfe4e46290331dfef0dbf0ef3679de11",
+            .hash = "N-V-__8AAB-iPgCkalcM0Ep6Ru2Um0D3T38-k3fWL4sDd7lE",
+        },
     },
     .paths = .{
         "build.zig",

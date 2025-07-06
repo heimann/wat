@@ -75,5 +75,41 @@ else
     exit 1
 fi
 
+echo "Testing Python support..."
+# Expected output for Python (sorted for comparison)
+EXPECTED_PYTHON=$(cat <<'EOF'
+ERROR	21	assignment
+OK	20	assignment
+Point	5	class_definition
+Status	19	class_definition
+VERSION	3	assignment
+__init__	6	function_definition
+add	13	function_definition
+distance	10	function_definition
+fetch_data	27	function_definition
+global_config	23	assignment
+main	16	function_definition
+EOF
+)
+
+# Run wat on the Python test fixture and sort output
+ACTUAL_PYTHON=$(./zig-out/bin/wat tests/fixtures/simple.py 2>&1 | sort)
+
+# Sort expected output for comparison
+EXPECTED_PYTHON_SORTED=$(echo "$EXPECTED_PYTHON" | sort)
+
+# Compare Python outputs
+if [ "$ACTUAL_PYTHON" = "$EXPECTED_PYTHON_SORTED" ]; then
+    echo "✓ Python test passed"
+else
+    echo "✗ Python test failed: Output mismatch"
+    echo "Expected:"
+    echo "$EXPECTED_PYTHON_SORTED"
+    echo ""
+    echo "Actual:"
+    echo "$ACTUAL_PYTHON"
+    exit 1
+fi
+
 echo "✓ All tests passed: Symbol extraction works correctly for all languages"
 exit 0

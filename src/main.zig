@@ -3,12 +3,15 @@ const tree_sitter = @import("tree-sitter");
 
 extern fn tree_sitter_zig() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_go() callconv(.C) *tree_sitter.Language;
+extern fn tree_sitter_python() callconv(.C) *tree_sitter.Language;
 
 fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
     if (std.mem.endsWith(u8, file_path, ".zig")) {
         return tree_sitter_zig();
     } else if (std.mem.endsWith(u8, file_path, ".go")) {
         return tree_sitter_go();
+    } else if (std.mem.endsWith(u8, file_path, ".py")) {
+        return tree_sitter_python();
     }
     return null;
 }
@@ -93,7 +96,10 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
         // Go node types
         std.mem.eql(u8, node_type, "type_declaration") or
         std.mem.eql(u8, node_type, "const_declaration") or
-        std.mem.eql(u8, node_type, "var_declaration")) {
+        std.mem.eql(u8, node_type, "var_declaration") or
+        // Python node types
+        std.mem.eql(u8, node_type, "function_definition") or
+        std.mem.eql(u8, node_type, "class_definition")) {
         
         // Find the identifier child
         var i: u32 = 0;
@@ -115,6 +121,20 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
                     std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, node_type });
                     break;
                 }
+            }
+        }
+    }
+    
+    // Special handling for Python global assignments
+    if (std.mem.eql(u8, node_type, "assignment")) { // module-level assignment
+        if (node.child(0)) |left| {
+            if (std.mem.eql(u8, left.kind(), "identifier")) {
+                const start = left.startByte();
+                const end = left.endByte();
+                const name = source[start..end];
+                const line = left.startPoint().row + 1;
+                
+                std.debug.print("{s}\t{d}\tassignment\n", .{ name, line });
             }
         }
     }

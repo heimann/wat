@@ -7,3 +7,6 @@ zig-cache/
 
 # Test files
 test.zig
+
+# Claude Code settings
+.claude/settings.local.json

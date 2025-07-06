@@ -17,6 +17,12 @@ extern fn tree_sitter_java() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_elixir() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_html() callconv(.C) *tree_sitter.Language;
 
+const MatchInfoMode = enum {
+    smart,   // Show match info only for fuzzy matches (default)
+    always,  // Always show match info column
+    never,   // Never show match info column
+};
+
 fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
     if (std.mem.endsWith(u8, file_path, ".zig")) {
         return tree_sitter_zig();
@@ -78,6 +84,10 @@ pub fn main() !void {
             try stderr.print("  --full-context   Show full symbol definition with documentation\n", .{});
             try stderr.print("  --fuzzy          Force fuzzy matching (prefix, suffix, contains)\n", .{});
             try stderr.print("  --strict         Disable automatic fuzzy matching fallback\n", .{});
+            try stderr.print("  --match-info <mode>  Control match type display: smart, always, never\n", .{});
+            try stderr.print("                   smart: show for fuzzy matches only (default)\n", .{});
+            try stderr.print("                   always: always show match type column\n", .{});
+            try stderr.print("                   never: never show match type column\n", .{});
             try stderr.print("  --help           Show this help message\n", .{});
             try stderr.print("\nNote: Fuzzy matching is automatically used when no exact matches are found.\n", .{});
             try stderr.print("      Use --strict to disable this behavior.\n", .{});
@@ -90,6 +100,7 @@ pub fn main() !void {
         var with_deps = false;
         var fuzzy = false;
         var strict = false;
+        var match_info: MatchInfoMode = .smart;
         
         // Parse flags
         var i: usize = 3;
@@ -106,10 +117,22 @@ pub fn main() !void {
                 fuzzy = true;
             } else if (std.mem.eql(u8, args[i], "--strict")) {
                 strict = true;
+            } else if (std.mem.eql(u8, args[i], "--match-info") and i + 1 < args.len) {
+                i += 1;
+                if (std.mem.eql(u8, args[i], "always")) {
+                    match_info = .always;
+                } else if (std.mem.eql(u8, args[i], "never")) {
+                    match_info = .never;
+                } else if (std.mem.eql(u8, args[i], "smart")) {
+                    match_info = .smart;
+                } else {
+                    try stderr.print("Invalid --match-info value: {s}. Use 'smart', 'always', or 'never'\n", .{args[i]});
+                    return;
+                }
             }
         }
         
-        try findCommand(allocator, args[2], with_context, with_refs, full_context, with_deps, fuzzy, strict);
+        try findCommand(allocator, args[2], with_context, with_refs, full_context, with_deps, fuzzy, strict, match_info);
     } else if (std.mem.eql(u8, args[1], "refs")) {
         if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
             try stderr.print("Usage: {s} refs <symbol> [options]\n\n", .{args[0]});
@@ -727,7 +750,7 @@ fn indexDirectory(allocator: std.mem.Allocator, path: []const u8, db: *Database,
     }
 }
 
-fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_context: bool, with_refs: bool, full_context: bool, with_deps: bool, fuzzy: bool, strict: bool) !void {
+fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_context: bool, with_refs: bool, full_context: bool, with_deps: bool, fuzzy: bool, strict: bool, match_info: MatchInfoMode) !void {
     var db = try Database.init("wat.db");
     defer db.deinit();
     
@@ -754,9 +777,17 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_conte
             stdout.print("Fuzzy matches for '{s}':\n", .{symbol_name}) catch {};
         }
         for (fuzzy_matches) |match| {
-            // Basic format with match info
-            try stdout.print("[{s}:{d}] {s}\t{s}\t{d}\t{s}", 
-                .{ match.match_type, match.score, match.symbol.name, match.symbol.path, 
+            // Print match info based on setting
+            switch (match_info) {
+                .always, .smart => {
+                    try stdout.print("[{s}:{d}]\t", .{ match.match_type, match.score });
+                },
+                .never => {},
+            }
+            
+            // Print standard fields
+            try stdout.print("{s}\t{s}\t{d}\t{s}", 
+                .{ match.symbol.name, match.symbol.path, 
                    match.symbol.line, match.symbol.node_type });
             
             // Add reference count if requested
@@ -869,6 +900,11 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_conte
     
     // Regular output with optional enhancements
     for (symbols) |sym| {
+        // Print match info based on setting
+        if (match_info == .always) {
+            try stdout.print("[exact:100]\t", .{});
+        }
+        
         // Basic ctags format
         try stdout.print("{s}\t{s}\t{d}\t{s}", .{ sym.name, sym.path, sym.line, sym.node_type });
         

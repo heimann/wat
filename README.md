@@ -76,6 +76,11 @@ zig build
 # Strict mode (disable automatic fuzzy fallback)
 ./zig-out/bin/wat find Data --strict                 # No match: returns error if not found exactly
 
+# Control match info column for consistent output
+./zig-out/bin/wat find Database --match-info always  # Always show [exact:100] column
+./zig-out/bin/wat find Data --match-info never       # Never show match type column
+./zig-out/bin/wat find Data --match-info smart       # Default: show only for fuzzy matches
+
 # Combine multiple flags
 ./zig-out/bin/wat find main --with-context --with-refs --with-deps
 ./zig-out/bin/wat find extract --fuzzy --with-context
@@ -216,6 +221,7 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
   - `--with-deps` - Show count of dependencies
   - `--fuzzy` - Force fuzzy matching (automatic when no exact match)
   - `--strict` - Disable automatic fuzzy matching fallback
+  - `--match-info <mode>` - Control match type column: smart (default), always, never
 - [x] `wat refs <symbol>` - Find all references
   - `--with-context` - Show line of code with caret indicators
   - `--include-defs` - Include definitions marked with [DEF]

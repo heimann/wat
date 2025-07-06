@@ -305,9 +305,21 @@ else
 fi
 ```
 
-#### 10. Test and Commit
+#### 10. Update Documentation
 
-Run `make test` to ensure everything works, then commit with a descriptive message.
+Update the README.md:
+- Add the language to the "Current Features" usage examples
+- Update the Phase 2 progress with a checkmark
+- Add the language to the "Current Status" list with version info
+- Update the binary size if it's grown significantly
+
+#### 11. Test and Commit
+
+Run `make test` to ensure everything works, then commit with a descriptive message that includes:
+- Language version added
+- Whether it needs scanner.c
+- What symbol types are supported
+- Binary size impact
 
 ## Continuing Development
 

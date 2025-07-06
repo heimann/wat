@@ -81,6 +81,11 @@ zig build
 ./zig-out/bin/wat find Data --match-info never       # Never show match type column
 ./zig-out/bin/wat find Data --match-info smart       # Default: show only for fuzzy matches
 
+# Interactive fuzzy finder with real-time search
+./zig-out/bin/wat find --interactive                # Opens TUI with fuzzy search
+./zig-out/bin/wat find --interactive --action "code -g {file}:{line}"  # Custom editor
+./zig-out/bin/wat find --interactive --action "grep -n {name} {file}"  # Custom action
+
 # Combine multiple flags
 ./zig-out/bin/wat find main --with-context --with-refs --with-deps
 ./zig-out/bin/wat find extract --fuzzy --with-context
@@ -113,6 +118,39 @@ zig build
 ```
 
 ## Advanced Features
+
+### Interactive Fuzzy Finder
+
+The `wat find --interactive` command provides a terminal UI for real-time symbol search:
+
+```bash
+# Launch interactive finder with default editor
+./zig-out/bin/wat find --interactive
+
+# Use Visual Studio Code
+./zig-out/bin/wat find --interactive --action "code -g {file}:{line}"
+
+# Use custom command with placeholders
+./zig-out/bin/wat find --interactive --action "echo Found {name} at {file}:{line}"
+```
+
+Features:
+- Real-time fuzzy search as you type
+- Arrow keys for navigation (↑/↓)
+- Enter to select and execute action
+- ESC or Ctrl-C to cancel
+- Color-coded match types:
+  - Green [exact:100] - Exact matches
+  - Yellow [prefix:80] - Prefix matches  
+  - Cyan [suffix:60] - Suffix matches
+  - Gray [contains:40] - Contains matches
+- Viewport scrolling for large result sets
+- Shows match count and navigation help
+
+The action template supports placeholders:
+- `{file}` - Full path to the file
+- `{line}` - Line number of the symbol
+- `{name}` - Symbol name
 
 ### Call Tree Visualization
 
@@ -168,6 +206,7 @@ main()
 - `wat deps` command analyzes and displays symbol dependencies
 - `wat map` command shows call tree structure of the application
 - Fuzzy matching support with `--fuzzy` flag for partial name matches (prefix, suffix, contains)
+- Interactive fuzzy finder with `--interactive` flag for real-time search and navigation
 
 ## Roadmap
 
@@ -222,6 +261,8 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
   - `--fuzzy` - Force fuzzy matching (automatic when no exact match)
   - `--strict` - Disable automatic fuzzy matching fallback
   - `--match-info <mode>` - Control match type column: smart (default), always, never
+  - `--interactive` - Launch interactive TUI fuzzy finder
+  - `--action <cmd>` - Custom action template for interactive mode (default: $EDITOR)
 - [x] `wat refs <symbol>` - Find all references
   - `--with-context` - Show line of code with caret indicators
   - `--include-defs` - Include definitions marked with [DEF]

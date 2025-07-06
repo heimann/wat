@@ -1,0 +1,275 @@
+const std = @import("std");
+const c = @cImport({
+    @cInclude("sqlite3.h");
+});
+
+const DatabaseError = error{
+    OpenFailed,
+    PrepareFailed,
+    ExecuteFailed,
+    BindFailed,
+    StepFailed,
+    FinalizeFailed,
+};
+
+pub const Database = struct {
+    db: ?*c.sqlite3,
+    
+    const Self = @This();
+    
+    pub fn init(path: [:0]const u8) !Self {
+        var db: ?*c.sqlite3 = null;
+        const result = c.sqlite3_open(path.ptr, &db);
+        if (result != c.SQLITE_OK) {
+            if (db) |d| {
+                std.debug.print("SQLite error: {s}\n", .{c.sqlite3_errmsg(d)});
+                _ = c.sqlite3_close(d);
+            }
+            return DatabaseError.OpenFailed;
+        }
+        
+        const instance = Self{ .db = db };
+        try instance.createTables();
+        return instance;
+    }
+    
+    pub fn deinit(self: *Self) void {
+        if (self.db) |db| {
+            _ = c.sqlite3_close(db);
+            self.db = null;
+        }
+    }
+    
+    fn createTables(self: Self) !void {
+        const schema =
+            \\CREATE TABLE IF NOT EXISTS files (
+            \\    id INTEGER PRIMARY KEY,
+            \\    path TEXT UNIQUE NOT NULL,
+            \\    last_modified INTEGER NOT NULL,
+            \\    language TEXT NOT NULL,
+            \\    hash TEXT
+            \\);
+            \\
+            \\CREATE TABLE IF NOT EXISTS symbols (
+            \\    id INTEGER PRIMARY KEY,
+            \\    file_id INTEGER NOT NULL,
+            \\    name TEXT NOT NULL,
+            \\    line INTEGER NOT NULL,
+            \\    column INTEGER,
+            \\    node_type TEXT NOT NULL,
+            \\    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+            \\);
+            \\
+            \\CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+            \\CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
+        ;
+        
+        try self.exec(schema);
+    }
+    
+    fn exec(self: Self, sql: []const u8) !void {
+        var err_msg: [*c]u8 = undefined;
+        const result = c.sqlite3_exec(
+            self.db,
+            sql.ptr,
+            null,
+            null,
+            &err_msg
+        );
+        
+        if (result != c.SQLITE_OK) {
+            std.debug.print("SQL error: {s}\n", .{err_msg});
+            c.sqlite3_free(err_msg);
+            return DatabaseError.ExecuteFailed;
+        }
+    }
+    
+    pub fn beginTransaction(self: Self) !void {
+        try self.exec("BEGIN TRANSACTION");
+    }
+    
+    pub fn commit(self: Self) !void {
+        try self.exec("COMMIT");
+    }
+    
+    pub fn rollback(self: Self) !void {
+        try self.exec("ROLLBACK");
+    }
+    
+    pub fn insertFile(self: Self, path: []const u8, last_modified: i64, language: []const u8) !i64 {
+        const sql = "INSERT OR REPLACE INTO files (path, last_modified, language) VALUES (?, ?, ?)";
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_text(stmt, 1, path.ptr, @intCast(path.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_int64(stmt, 2, last_modified);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_text(stmt, 3, language.ptr, @intCast(language.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_step(stmt);
+        if (result != c.SQLITE_DONE) {
+            return DatabaseError.StepFailed;
+        }
+        
+        return c.sqlite3_last_insert_rowid(self.db);
+    }
+    
+    pub fn insertSymbol(
+        self: Self,
+        file_id: i64,
+        name: []const u8,
+        line: u32,
+        node_type: []const u8,
+    ) !void {
+        const sql = "INSERT INTO symbols (file_id, name, line, node_type) VALUES (?, ?, ?, ?)";
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_int64(stmt, 1, file_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_text(stmt, 2, name.ptr, @intCast(name.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_int(stmt, 3, @intCast(line));
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_text(stmt, 4, node_type.ptr, @intCast(node_type.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_step(stmt);
+        if (result != c.SQLITE_DONE) {
+            return DatabaseError.StepFailed;
+        }
+    }
+    
+    pub fn findSymbol(self: Self, name: []const u8, allocator: std.mem.Allocator) ![]Symbol {
+        const sql = 
+            \\SELECT s.name, s.line, s.node_type, f.path
+            \\FROM symbols s
+            \\JOIN files f ON s.file_id = f.id
+            \\WHERE s.name = ?
+            \\ORDER BY f.path, s.line
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_text(stmt, 1, name.ptr, @intCast(name.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        var symbols = std.ArrayList(Symbol).init(allocator);
+        errdefer symbols.deinit();
+        
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const sym_name = std.mem.span(c.sqlite3_column_text(stmt, 0));
+            const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
+            const node_type = std.mem.span(c.sqlite3_column_text(stmt, 2));
+            const path = std.mem.span(c.sqlite3_column_text(stmt, 3));
+            
+            try symbols.append(.{
+                .name = try allocator.dupe(u8, sym_name),
+                .line = line,
+                .node_type = try allocator.dupe(u8, node_type),
+                .path = try allocator.dupe(u8, path),
+            });
+        }
+        
+        return symbols.toOwnedSlice();
+    }
+    
+    pub fn needsReindex(self: Self, path: []const u8, last_modified: i64) !bool {
+        const sql = "SELECT last_modified FROM files WHERE path = ?";
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_text(stmt, 1, path.ptr, @intCast(path.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_step(stmt);
+        if (result == c.SQLITE_ROW) {
+            const stored_modified = c.sqlite3_column_int64(stmt, 0);
+            return last_modified > stored_modified;
+        }
+        
+        // File not in database, needs indexing
+        return true;
+    }
+    
+    pub fn deleteFileSymbols(self: Self, file_id: i64) !void {
+        const sql = "DELETE FROM symbols WHERE file_id = ?";
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_int64(stmt, 1, file_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_step(stmt);
+        if (result != c.SQLITE_DONE) {
+            return DatabaseError.StepFailed;
+        }
+    }
+};
+
+pub const Symbol = struct {
+    name: []const u8,
+    line: u32,
+    node_type: []const u8,
+    path: []const u8,
+    
+    pub fn deinit(self: *Symbol, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.node_type);
+        allocator.free(self.path);
+    }
+};
+
+pub fn deinitSymbols(symbols: []Symbol, allocator: std.mem.Allocator) void {
+    for (symbols) |*sym| {
+        sym.deinit(allocator);
+    }
+    allocator.free(symbols);
+}

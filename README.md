@@ -40,7 +40,7 @@ The tool aims to be a faithful reporter of what's in the code, not a judge of wh
 # Build the project
 zig build
 
-# Extract symbols from a file
+# Extract symbols from a single file (prints to stdout)
 ./zig-out/bin/wat myfile.zig  # Zig
 ./zig-out/bin/wat myfile.go   # Go
 ./zig-out/bin/wat myfile.py   # Python
@@ -52,6 +52,15 @@ zig build
 ./zig-out/bin/wat myfile.java # Java
 ./zig-out/bin/wat myfile.ex   # Elixir
 ./zig-out/bin/wat myfile.exs  # Elixir scripts
+./zig-out/bin/wat myfile.html # HTML (extracts id attributes)
+
+# Index a directory (creates wat.db in current directory)
+./zig-out/bin/wat index src/
+./zig-out/bin/wat index .
+
+# Find symbols in the indexed database
+./zig-out/bin/wat find main
+./zig-out/bin/wat find parseConfig
 ```
 
 ## Usage (Future)
@@ -100,23 +109,22 @@ wat *.ts  # TypeScript files
 
 Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 
-### Phase 3: Persistent Index (NEXT UP 👈)
-- [ ] SQLite-based symbol database
+### Phase 3: Persistent Index ✅
+- [x] SQLite-based symbol database
   - Files table: track path, last_modified, language
   - Symbols table: name, line, node_type with file reference
   - Indexed by symbol name for fast lookups
-- [ ] Index entire repositories with `wat index <path>`
-- [ ] Incremental updates for changed files
-- [ ] Fast symbol queries
+- [x] Index entire repositories with `wat index <path>`
+- [x] Incremental updates for changed files
+- [x] Fast symbol queries with `wat find <symbol>`
 
-**Implementation Notes:**
-- Start by adding SQLite dependency to build.zig.zon
-- Design command-line argument parsing (index vs single file)
-- Create database schema and initialization code
-- Modify existing symbol extraction to optionally write to database
+**Current Implementation:**
+- Database is stored as `wat.db` in the current working directory
+- Commands must be run from the same directory to access the same database
+- TODO: Make database location configurable (e.g., `--db` flag, project root detection, or ~/.wat/)
 
-### Phase 4: Smart Context Extraction
-- [ ] `wat find <symbol>` - Find symbol definition
+### Phase 4: Smart Context Extraction (NEXT UP 👈)
+- [x] `wat find <symbol>` - Find symbol definition
 - [ ] `wat refs <symbol>` - Find all references
 - [ ] `wat context <symbol>` - Get symbol with smart context
 - [ ] `wat deps <symbol>` - Show symbol dependencies

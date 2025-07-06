@@ -10,3 +10,6 @@ test.zig
 
 # Claude Code settings
 .claude/settings.local.json
+
+# Database files
+wat.db

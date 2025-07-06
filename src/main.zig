@@ -54,27 +54,60 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
-    if (args.len < 2) {
+    if (args.len < 2 or (args.len >= 2 and std.mem.eql(u8, args[1], "--help"))) {
         printUsage(args[0]);
         return;
     }
 
     // Check for commands
     if (std.mem.eql(u8, args[1], "index")) {
-        if (args.len < 3) {
-            try stderr.print("Usage: {s} index <directory>\n", .{args[0]});
+        if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
+            try stderr.print("Usage: {s} index <directory>\n\n", .{args[0]});
+            try stderr.print("Build a searchable index of symbols in the directory.\n", .{});
+            try stderr.print("Creates or updates wat.db in the current directory.\n", .{});
             return;
         }
         try indexCommand(allocator, args[2]);
     } else if (std.mem.eql(u8, args[1], "find")) {
-        if (args.len < 3) {
-            try stderr.print("Usage: {s} find <symbol>\n", .{args[0]});
+        if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
+            try stderr.print("Usage: {s} find <symbol> [options]\n\n", .{args[0]});
+            try stderr.print("Options:\n", .{});
+            try stderr.print("  --with-context   Show the line of code containing the symbol\n", .{});
+            try stderr.print("  --with-refs      Show count of references to the symbol\n", .{});
+            try stderr.print("  --with-deps      Show count of dependencies from the symbol\n", .{});
+            try stderr.print("  --full-context   Show full symbol definition with documentation\n", .{});
+            try stderr.print("  --help           Show this help message\n", .{});
             return;
         }
-        try findCommand(allocator, args[2]);
+        
+        var with_context = false;
+        var with_refs = false;
+        var full_context = false;
+        var with_deps = false;
+        
+        // Parse flags
+        var i: usize = 3;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--with-context")) {
+                with_context = true;
+            } else if (std.mem.eql(u8, args[i], "--with-refs")) {
+                with_refs = true;
+            } else if (std.mem.eql(u8, args[i], "--full-context")) {
+                full_context = true;
+            } else if (std.mem.eql(u8, args[i], "--with-deps")) {
+                with_deps = true;
+            }
+        }
+        
+        try findCommand(allocator, args[2], with_context, with_refs, full_context, with_deps);
     } else if (std.mem.eql(u8, args[1], "refs")) {
-        if (args.len < 3) {
-            try stderr.print("Usage: {s} refs <symbol> [--with-context] [--include-defs]\n", .{args[0]});
+        if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
+            try stderr.print("Usage: {s} refs <symbol> [options]\n\n", .{args[0]});
+            try stderr.print("Find all references to a symbol in the codebase.\n\n", .{});
+            try stderr.print("Options:\n", .{});
+            try stderr.print("  --with-context   Show the line of code with caret indicators\n", .{});
+            try stderr.print("  --include-defs   Include symbol definitions in results\n", .{});
+            try stderr.print("  --help           Show this help message\n", .{});
             return;
         }
         
@@ -93,18 +126,39 @@ pub fn main() !void {
         
         try refsCommand(allocator, args[2], with_context, include_defs);
     } else if (std.mem.eql(u8, args[1], "context")) {
-        if (args.len < 3) {
-            try stderr.print("Usage: {s} context <symbol>\n", .{args[0]});
+        if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
+            try stderr.print("Usage: {s} context <symbol>\n\n", .{args[0]});
+            try stderr.print("Show the full definition of a symbol with documentation.\n", .{});
             return;
         }
         try contextCommand(allocator, args[2]);
     } else if (std.mem.eql(u8, args[1], "deps")) {
-        if (args.len < 3) {
-            try stderr.print("Usage: {s} deps <symbol>\n", .{args[0]});
+        if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
+            try stderr.print("Usage: {s} deps <symbol>\n\n", .{args[0]});
+            try stderr.print("Show what other symbols this symbol depends on.\n", .{});
             return;
         }
         try depsCommand(allocator, args[2]);
     } else if (std.mem.eql(u8, args[1], "map")) {
+        // Check for help flag
+        var show_help = false;
+        for (args[2..]) |arg| {
+            if (std.mem.eql(u8, arg, "--help")) {
+                show_help = true;
+                break;
+            }
+        }
+        
+        if (show_help) {
+            try stderr.print("Usage: {s} map [options]\n\n", .{args[0]});
+            try stderr.print("Show the call tree structure of the application.\n\n", .{});
+            try stderr.print("Options:\n", .{});
+            try stderr.print("  --entry <symbol>  Specify entry point (default: main)\n", .{});
+            try stderr.print("  --depth <number>  Limit tree depth (default: 5)\n", .{});
+            try stderr.print("  --help            Show this help message\n", .{});
+            return;
+        }
+        
         var entry_point: ?[]const u8 = null;
         var max_depth: u32 = 5; // default depth
         
@@ -520,14 +574,13 @@ fn printUsage(program_name: []const u8) void {
     stdout.print("Usage:\n", .{}) catch {};
     stdout.print("  {s} <file> [--debug]                         Extract symbols from a single file\n", .{program_name}) catch {};
     stdout.print("  {s} index <directory>                        Index all supported files in directory\n", .{program_name}) catch {};
-    stdout.print("  {s} find <symbol>                            Find symbol in indexed database\n", .{program_name}) catch {};
-    stdout.print("  {s} refs <symbol> [--with-context] [--include-defs]  Find references to symbol\n", .{program_name}) catch {};
+    stdout.print("  {s} find <symbol> [options]                  Find symbol in indexed database\n", .{program_name}) catch {};
+    stdout.print("  {s} refs <symbol> [options]                  Find references to symbol\n", .{program_name}) catch {};
     stdout.print("  {s} context <symbol>                         Show full context of symbol with documentation\n", .{program_name}) catch {};
     stdout.print("  {s} deps <symbol>                            Show dependencies of symbol\n", .{program_name}) catch {};
-    stdout.print("  {s} map [--entry <symbol>] [--depth <n>]     Show call tree structure\n", .{program_name}) catch {};
-    stdout.print("\nOptions for refs:\n", .{}) catch {};
-    stdout.print("  --with-context   Show the line of code containing each reference\n", .{}) catch {};
-    stdout.print("  --include-defs   Include symbol definitions in the results\n", .{}) catch {};
+    stdout.print("  {s} map [options]                            Show call tree structure\n", .{program_name}) catch {};
+    stdout.print("\nFor help on specific commands, use:\n", .{}) catch {};
+    stdout.print("  {s} <command> --help\n", .{program_name}) catch {};
 }
 
 fn processFile(allocator: std.mem.Allocator, file_path: []const u8, debug_mode: bool, db: ?*Database) !void {
@@ -663,7 +716,7 @@ fn indexDirectory(allocator: std.mem.Allocator, path: []const u8, db: *Database,
     }
 }
 
-fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
+fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_context: bool, with_refs: bool, full_context: bool, with_deps: bool) !void {
     var db = try Database.init("wat.db");
     defer db.deinit();
     
@@ -675,9 +728,109 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
         return;
     }
     
-    // Print in ctags format
+    // Handle full context option (like context command)
+    if (full_context) {
+        for (symbols) |sym| {
+            try stdout.print("{s} in {s}:{d}\n", .{ sym.name, sym.path, sym.line });
+            try stdout.print("Type: {s}\n\n", .{sym.node_type});
+            
+            // Extract full context like contextCommand does
+            const file = try std.fs.cwd().openFile(sym.path, .{});
+            defer file.close();
+            
+            const content = try file.readToEndAlloc(allocator, 10 * 1024 * 1024);
+            defer allocator.free(content);
+            
+            const lang = detectLanguage(sym.path) orelse {
+                try stderr.print("Unsupported file type: {s}\n", .{sym.path});
+                continue;
+            };
+            
+            const parser = tree_sitter.Parser.create();
+            defer tree_sitter.Parser.destroy(parser);
+            try tree_sitter.Parser.setLanguage(parser, lang);
+            
+            const tree = parser.parseString(content, null);
+            if (tree) |t| {
+                defer t.destroy();
+                const root = t.rootNode();
+                
+                if (findSymbolNode(root, sym.name, sym.line, content)) |symbol_node| {
+                    const start_byte = symbol_node.startByte();
+                    const end_byte = symbol_node.endByte();
+                    const node_source = content[start_byte..end_byte];
+                    
+                    // Extract documentation
+                    if (extractDocumentation(symbol_node, content, allocator)) |docs| {
+                        defer allocator.free(docs);
+                        try stdout.print("{s}\n", .{docs});
+                    }
+                    
+                    // Print the symbol definition
+                    try stdout.print("{s}\n", .{node_source});
+                }
+            }
+            
+            if (symbols.len > 1) {
+                try stdout.print("\n{s}\n", .{"-" ** 60});
+            }
+        }
+        return;
+    }
+    
+    // Regular output with optional enhancements
     for (symbols) |sym| {
-        stdout.print("{s}\t{s}\t{d}\t{s}\n", .{ sym.name, sym.path, sym.line, sym.node_type }) catch {};
+        // Basic ctags format
+        try stdout.print("{s}\t{s}\t{d}\t{s}", .{ sym.name, sym.path, sym.line, sym.node_type });
+        
+        // Add reference count if requested
+        if (with_refs) {
+            const refs_count = try db.getReferencesCount(sym.name);
+            try stdout.print("\trefs: {d}", .{refs_count});
+        }
+        
+        // Add dependency count if requested
+        if (with_deps) {
+            const deps_count = try db.getDependenciesCount(sym.name);
+            try stdout.print("\tdeps: {d}", .{deps_count});
+        }
+        
+        try stdout.print("\n", .{});
+        
+        // Show line context if requested
+        if (with_context) {
+            const file = try std.fs.cwd().openFile(sym.path, .{});
+            defer file.close();
+            
+            const content = try file.readToEndAlloc(allocator, 10 * 1024 * 1024);
+            defer allocator.free(content);
+            
+            // Find the line
+            var line_count: u32 = 1;
+            var line_start: usize = 0;
+            var line_end: usize = 0;
+            
+            for (content, 0..) |char, idx| {
+                if (char == '\n') {
+                    if (line_count == sym.line) {
+                        line_end = idx;
+                        break;
+                    }
+                    line_count += 1;
+                    line_start = idx + 1;
+                }
+            }
+            
+            // Handle last line without newline
+            if (line_count == sym.line and line_end == 0) {
+                line_end = content.len;
+            }
+            
+            if (line_start < content.len and line_end > line_start) {
+                const line_content = content[line_start..line_end];
+                try stdout.print("  {s}\n", .{line_content});
+            }
+        }
     }
 }
 

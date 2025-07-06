@@ -62,6 +62,15 @@ zig build
 ./zig-out/bin/wat find main
 ./zig-out/bin/wat find parseConfig
 
+# Enhanced find with additional information
+./zig-out/bin/wat find Database --with-context       # Show line of code
+./zig-out/bin/wat find Database --with-refs          # Show reference count
+./zig-out/bin/wat find Database --with-deps          # Show dependency count
+./zig-out/bin/wat find Database --full-context       # Show full definition with docs
+
+# Combine multiple flags
+./zig-out/bin/wat find main --with-context --with-refs --with-deps
+
 # Find references to symbols
 ./zig-out/bin/wat refs Database
 ./zig-out/bin/wat refs parseString
@@ -190,11 +199,18 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 
 ### Phase 4: Smart Context Extraction ✅
 - [x] `wat find <symbol>` - Find symbol definition
+  - `--with-context` - Show line of code containing symbol
+  - `--with-refs` - Show count of references
+  - `--full-context` - Show full symbol definition with documentation
+  - `--with-deps` - Show count of dependencies
 - [x] `wat refs <symbol>` - Find all references
   - `--with-context` - Show line of code with caret indicators
   - `--include-defs` - Include definitions marked with [DEF]
 - [x] `wat context <symbol>` - Get symbol with smart context (full function/type definition with documentation)
 - [x] `wat deps <symbol>` - Show symbol dependencies (calls, type usage, imports)
+- [x] `wat map` - Show call tree structure of the application
+  - `--entry` - Specify entry point (default: main)
+  - `--depth` - Limit tree depth (default: 10)
 
 ### Phase 5: Extended Language Support
 - [ ] Add more languages based on user demand

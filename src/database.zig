@@ -530,6 +530,57 @@ pub const Database = struct {
         return dependencies.toOwnedSlice();
     }
     
+    pub fn getReferencesCount(self: Self, name: []const u8) !u32 {
+        const sql = "SELECT COUNT(*) FROM refs WHERE name = ? AND is_definition = 0";
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_text(stmt, 1, name.ptr, @intCast(name.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            return @intCast(c.sqlite3_column_int(stmt, 0));
+        }
+        
+        return 0;
+    }
+    
+    pub fn getDependenciesCount(self: Self, name: []const u8) !u32 {
+        const sql = 
+            \\SELECT COUNT(DISTINCT d.depends_on)
+            \\FROM deps d
+            \\JOIN symbols s ON d.symbol_id = s.id
+            \\WHERE s.name = ?
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_text(stmt, 1, name.ptr, @intCast(name.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            return @intCast(c.sqlite3_column_int(stmt, 0));
+        }
+        
+        return 0;
+    }
+    
     pub fn findReferences(self: Self, name: []const u8, include_defs: bool, allocator: std.mem.Allocator) ![]Reference {
         const sql = if (include_defs)
             \\SELECT r.name, r.line, r.column, f.path, r.context, r.is_definition

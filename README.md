@@ -61,6 +61,10 @@ zig build
 # Find symbols in the indexed database
 ./zig-out/bin/wat find main
 ./zig-out/bin/wat find parseConfig
+
+# Find references to symbols
+./zig-out/bin/wat refs Database
+./zig-out/bin/wat refs parseString
 ```
 
 ## Usage (Future)
@@ -125,7 +129,7 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 
 ### Phase 4: Smart Context Extraction (NEXT UP 👈)
 - [x] `wat find <symbol>` - Find symbol definition
-- [ ] `wat refs <symbol>` - Find all references
+- [x] `wat refs <symbol>` - Find all references
 - [ ] `wat context <symbol>` - Get symbol with smart context
 - [ ] `wat deps <symbol>` - Show symbol dependencies
 

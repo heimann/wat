@@ -69,8 +69,7 @@ pub fn main() !void {
             std.debug.print("Usage: {s} refs <symbol>\n", .{args[0]});
             return;
         }
-        // TODO: Implement refs command
-        std.debug.print("refs command not yet implemented\n", .{});
+        try refsCommand(allocator, args[2]);
     } else {
         // Default: process single file
         const file_path = args[1];
@@ -471,7 +470,7 @@ fn printUsage(program_name: []const u8) void {
     std.debug.print("  {s} <file> [--debug]     Extract symbols from a single file\n", .{program_name});
     std.debug.print("  {s} index <directory>    Index all supported files in directory\n", .{program_name});
     std.debug.print("  {s} find <symbol>        Find symbol in indexed database\n", .{program_name});
-    std.debug.print("  {s} refs <symbol>        Find references to symbol (not yet implemented)\n", .{program_name});
+    std.debug.print("  {s} refs <symbol>        Find references to symbol\n", .{program_name});
 }
 
 fn processFile(allocator: std.mem.Allocator, file_path: []const u8, debug_mode: bool, db: ?*Database) !void {
@@ -507,6 +506,10 @@ fn processFile(allocator: std.mem.Allocator, file_path: []const u8, debug_mode: 
             // Insert file into database
             const file_id = try database.insertFile(file_path, last_modified, lang_name);
             
+            // Delete old symbols and references for this file
+            try database.deleteFileSymbols(file_id);
+            try database.deleteFileReferences(file_id);
+            
             // Extract symbols to database
             var context = DatabaseContext{
                 .db = database,
@@ -514,6 +517,9 @@ fn processFile(allocator: std.mem.Allocator, file_path: []const u8, debug_mode: 
                 .allocator = allocator,
             };
             try extractSymbolsToDatabase(root_node, file_content, 0, &context);
+            
+            // Extract references to database
+            try extractReferencesToDatabase(root_node, file_content, 0, &context);
         } else {
             // Original behavior: print to stdout
             try extractSymbols(root_node, file_content, 0, debug_mode);
@@ -610,6 +616,25 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
     // Print in ctags format
     for (symbols) |sym| {
         std.debug.print("{s}\t{s}\t{d}\t{s}\n", .{ sym.name, sym.path, sym.line, sym.node_type });
+    }
+}
+
+fn refsCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
+    var db = try Database.init("wat.db");
+    defer db.deinit();
+    
+    const references = try db.findReferences(symbol_name, allocator);
+    defer @import("database.zig").deinitReferences(references, allocator);
+    
+    if (references.len == 0) {
+        std.debug.print("No references to '{s}' found\n", .{symbol_name});
+        return;
+    }
+    
+    // Print references
+    std.debug.print("References to '{s}':\n", .{symbol_name});
+    for (references) |ref| {
+        std.debug.print("{s}:{d}:{d}\n", .{ ref.path, ref.line, ref.column });
     }
 }
 
@@ -898,6 +923,51 @@ fn extractSymbolFromSpecToDatabase(spec_node: tree_sitter.Node, source: []const 
                 try context.db.insertSymbol(context.file_id, name, line, parent_type);
                 break;
             }
+        }
+    }
+}
+
+fn extractReferencesToDatabase(node: tree_sitter.Node, source: []const u8, depth: usize, context: *DatabaseContext) !void {
+    const node_type = node.kind();
+    
+    // Check if this is an identifier node (potential reference)
+    if (std.mem.eql(u8, node_type, "identifier") or
+        std.mem.eql(u8, node_type, "type_identifier") or
+        std.mem.eql(u8, node_type, "property_identifier") or
+        std.mem.eql(u8, node_type, "field_identifier")) {
+        
+        // Skip if this identifier is part of a definition
+        if (node.parent()) |parent| {
+            const parent_type = parent.kind();
+            // Skip if parent is a symbol definition node
+            if (isSymbolNode(parent_type)) {
+                // This is a definition, not a reference
+                return;
+            }
+            // Skip if parent is a spec node (Go definitions)
+            if (std.mem.eql(u8, parent_type, "type_spec") or
+                std.mem.eql(u8, parent_type, "const_spec") or
+                std.mem.eql(u8, parent_type, "var_spec")) {
+                return;
+            }
+        }
+        
+        const start = node.startByte();
+        const end = node.endByte();
+        const name = source[start..end];
+        const point = node.startPoint();
+        const line = point.row + 1;
+        const column = point.column + 1;
+        
+        // Insert as reference
+        try context.db.insertReference(context.file_id, name, line, column);
+    }
+    
+    // Recurse through children
+    var i: u32 = 0;
+    while (i < node.childCount()) : (i += 1) {
+        if (node.child(i)) |child| {
+            try extractReferencesToDatabase(child, source, depth + 1, context);
         }
     }
 }

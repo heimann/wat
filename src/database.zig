@@ -60,8 +60,20 @@ pub const Database = struct {
             \\    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
             \\);
             \\
+            \\CREATE TABLE IF NOT EXISTS refs (
+            \\    id INTEGER PRIMARY KEY,
+            \\    file_id INTEGER NOT NULL,
+            \\    name TEXT NOT NULL,
+            \\    line INTEGER NOT NULL,
+            \\    column INTEGER,
+            \\    context TEXT,
+            \\    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
+            \\);
+            \\
             \\CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
             \\CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
+            \\CREATE INDEX IF NOT EXISTS idx_refs_name ON refs(name);
+            \\CREATE INDEX IF NOT EXISTS idx_refs_file ON refs(file_id);
         ;
         
         try self.exec(schema);
@@ -252,6 +264,107 @@ pub const Database = struct {
             return DatabaseError.StepFailed;
         }
     }
+    
+    pub fn deleteFileReferences(self: Self, file_id: i64) !void {
+        const sql = "DELETE FROM refs WHERE file_id = ?";
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_int64(stmt, 1, file_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_step(stmt);
+        if (result != c.SQLITE_DONE) {
+            return DatabaseError.StepFailed;
+        }
+    }
+    
+    pub fn insertReference(
+        self: Self,
+        file_id: i64,
+        name: []const u8,
+        line: u32,
+        column: u32,
+    ) !void {
+        const sql = "INSERT INTO refs (file_id, name, line, column) VALUES (?, ?, ?, ?)";
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_int64(stmt, 1, file_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_text(stmt, 2, name.ptr, @intCast(name.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_int(stmt, 3, @intCast(line));
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_int(stmt, 4, @intCast(column));
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_step(stmt);
+        if (result != c.SQLITE_DONE) {
+            return DatabaseError.StepFailed;
+        }
+    }
+    
+    pub fn findReferences(self: Self, name: []const u8, allocator: std.mem.Allocator) ![]Reference {
+        const sql = 
+            \\SELECT r.name, r.line, r.column, f.path
+            \\FROM refs r
+            \\JOIN files f ON r.file_id = f.id
+            \\WHERE r.name = ?
+            \\ORDER BY f.path, r.line
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_text(stmt, 1, name.ptr, @intCast(name.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        var references = std.ArrayList(Reference).init(allocator);
+        errdefer references.deinit();
+        
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const ref_name = std.mem.span(c.sqlite3_column_text(stmt, 0));
+            const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
+            const column = @as(u32, @intCast(c.sqlite3_column_int(stmt, 2)));
+            const path = std.mem.span(c.sqlite3_column_text(stmt, 3));
+            
+            try references.append(.{
+                .name = try allocator.dupe(u8, ref_name),
+                .line = line,
+                .column = column,
+                .path = try allocator.dupe(u8, path),
+            });
+        }
+        
+        return references.toOwnedSlice();
+    }
 };
 
 pub const Symbol = struct {
@@ -267,9 +380,28 @@ pub const Symbol = struct {
     }
 };
 
+pub const Reference = struct {
+    name: []const u8,
+    line: u32,
+    column: u32,
+    path: []const u8,
+    
+    pub fn deinit(self: *Reference, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.path);
+    }
+};
+
 pub fn deinitSymbols(symbols: []Symbol, allocator: std.mem.Allocator) void {
     for (symbols) |*sym| {
         sym.deinit(allocator);
     }
     allocator.free(symbols);
+}
+
+pub fn deinitReferences(references: []Reference, allocator: std.mem.Allocator) void {
+    for (references) |*ref| {
+        ref.deinit(allocator);
+    }
+    allocator.free(references);
 }

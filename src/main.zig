@@ -76,8 +76,9 @@ pub fn main() !void {
             try stderr.print("  --with-refs      Show count of references to the symbol\n", .{});
             try stderr.print("  --with-deps      Show count of dependencies from the symbol\n", .{});
             try stderr.print("  --full-context   Show full symbol definition with documentation\n", .{});
-            try stderr.print("  --fuzzy          Enable fuzzy matching (prefix, suffix, contains)\n", .{});
+            try stderr.print("  --fuzzy          Force fuzzy matching (prefix, suffix, contains)\n", .{});
             try stderr.print("  --help           Show this help message\n", .{});
+            try stderr.print("\nNote: Fuzzy matching is automatically used when no exact matches are found.\n", .{});
             return;
         }
         
@@ -729,13 +730,8 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_conte
     const symbols = try db.findSymbol(symbol_name, allocator);
     defer @import("database.zig").deinitSymbols(symbols, allocator);
     
-    if (symbols.len == 0 and !fuzzy) {
-        stderr.print("Symbol '{s}' not found\n", .{symbol_name}) catch {};
-        return;
-    }
-    
-    // If no exact matches and fuzzy is enabled, try fuzzy matching
-    if (symbols.len == 0 and fuzzy) {
+    // If no exact matches, try fuzzy matching (either explicit or automatic fallback)
+    if (symbols.len == 0) {
         const fuzzy_matches = try db.findSymbolFuzzy(symbol_name, allocator);
         defer @import("database.zig").deinitSymbolMatches(fuzzy_matches, allocator);
         
@@ -745,7 +741,13 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_conte
         }
         
         // Process fuzzy matches
-        stdout.print("Fuzzy matches for '{s}':\n", .{symbol_name}) catch {};
+        if (!fuzzy) {
+            // Automatic fallback - notify user
+            stdout.print("No exact match for '{s}'. Showing fuzzy matches:\n", .{symbol_name}) catch {};
+        } else {
+            // Explicit fuzzy search
+            stdout.print("Fuzzy matches for '{s}':\n", .{symbol_name}) catch {};
+        }
         for (fuzzy_matches) |match| {
             // Basic format with match info
             try stdout.print("[{s}:{d}] {s}\t{s}\t{d}\t{s}", 

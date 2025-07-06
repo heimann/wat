@@ -14,9 +14,25 @@ By bundling common languages directly, `wat` provides instant support for most c
 
 ## Current Features
 
-- Extract symbols (functions, types, variables) from Zig files
-- Simple ctags-like output format
+- Extract symbols (functions, types, variables) from multiple languages
+- Simple ctags-like output format  
 - Tree-sitter based parsing for accurate results
+- Language auto-detection based on file extensions
+
+### Symbol Extraction Philosophy
+
+`wat` extracts **all** symbols it finds, including:
+- Private/internal symbols (e.g., Python's `__init__` methods)
+- Class constants (shown as assignments in Python)
+- Helper functions marked as private
+
+This "extract everything" approach is intentional:
+- Matches traditional ctags behavior
+- LLMs benefit from seeing implementation details
+- Enables comprehensive codebase analysis
+- Filtering can be added later if needed
+
+The tool aims to be a faithful reporter of what's in the code, not a judge of what's "useful".
 
 ## Usage (Current)
 
@@ -24,8 +40,10 @@ By bundling common languages directly, `wat` provides instant support for most c
 # Build the project
 zig build
 
-# Extract symbols from a file (currently Zig only)
-./zig-out/bin/wat myfile.zig
+# Extract symbols from a file
+./zig-out/bin/wat myfile.zig  # Zig
+./zig-out/bin/wat myfile.go   # Go
+./zig-out/bin/wat myfile.py   # Python
 ```
 
 ## Usage (Future)

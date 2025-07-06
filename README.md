@@ -96,11 +96,11 @@ wat *.ts  # TypeScript files
 - ✅ C (v0.24.1) - functions, structs, enums, unions, typedefs, macros, variables (no scanner.c)
 - ✅ Java (v0.23.5) - classes, interfaces, methods, fields, constructors, enums, enum constants (no scanner.c)
 - ✅ Elixir (v0.3.4) - modules, functions (def/defp), macros, protocols, implementations (includes scanner.c)
-- 📋 HTML - Planned
+- ✅ HTML (v0.23.2) - extracts id attributes from elements (includes scanner.c)
 
 Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 
-### Phase 3: Persistent Index
+### Phase 3: Persistent Index (NEXT UP 👈)
 - [ ] SQLite-based symbol database
   - Files table: track path, last_modified, language
   - Symbols table: name, line, node_type with file reference
@@ -108,6 +108,12 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 - [ ] Index entire repositories with `wat index <path>`
 - [ ] Incremental updates for changed files
 - [ ] Fast symbol queries
+
+**Implementation Notes:**
+- Start by adding SQLite dependency to build.zig.zon
+- Design command-line argument parsing (index vs single file)
+- Create database schema and initialization code
+- Modify existing symbol extraction to optionally write to database
 
 ### Phase 4: Smart Context Extraction
 - [ ] `wat find <symbol>` - Find symbol definition

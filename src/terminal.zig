@@ -118,15 +118,19 @@ pub const Terminal = struct {
             return .escape;
         }
         
-        // Handle control characters
-        if (buf[0] < 32) {
+        // Handle control characters and DEL
+        if (buf[0] < 32 or buf[0] == 127) {
             switch (buf[0]) {
                 '\r', '\n' => return .enter,
                 '\t' => return .tab,
                 127, 8 => return .backspace,
                 3 => return .ctrl_c,
                 4 => return .ctrl_d,
-                else => return .{ .ctrl = @intCast(buf[0] + 'a' - 1) },
+                else => {
+                    if (buf[0] < 32) {
+                        return .{ .ctrl = @intCast(buf[0] + 'a' - 1) };
+                    }
+                },
             }
         }
         

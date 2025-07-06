@@ -157,6 +157,7 @@ pub const InteractiveFinder = struct {
         
         // Query line
         try self.term.moveCursor(2, 1);
+        try self.term.writer.writeAll(terminal.ansi.clear_line);
         try self.term.writer.print("> {s}_", .{self.query.items});
         
         // Results
@@ -236,6 +237,10 @@ pub const SelectedAction = struct {
                 i += 1;
             }
         }
+        
+        // Debug: print the command being executed
+        const stderr = std.io.getStdErr().writer();
+        try stderr.print("\nExecuting: {s}\n", .{action.items});
         
         // Execute the command
         var child = std.process.Child.init(&.{"sh", "-c", action.items}, allocator);

@@ -163,7 +163,28 @@ pub fn main() !void {
             const editor_env = std.process.getEnvVarOwned(allocator, "EDITOR") catch null;
             defer if (editor_env) |e| allocator.free(e);
             
-            const action = action_template orelse editor_env orelse "vim +{line} {file}";
+            const action = action_template orelse blk: {
+                if (editor_env) |editor| {
+                    // Detect common editors and add appropriate syntax
+                    if (std.mem.indexOf(u8, editor, "vim") != null or 
+                        std.mem.indexOf(u8, editor, "nvim") != null) {
+                        break :blk try std.fmt.allocPrint(allocator, "{s} +{{line}} {{file}}", .{editor});
+                    } else if (std.mem.indexOf(u8, editor, "emacs") != null) {
+                        break :blk try std.fmt.allocPrint(allocator, "{s} +{{line}} {{file}}", .{editor});
+                    } else if (std.mem.indexOf(u8, editor, "nano") != null) {
+                        break :blk try std.fmt.allocPrint(allocator, "{s} +{{line}} {{file}}", .{editor});
+                    } else if (std.mem.indexOf(u8, editor, "code") != null) {
+                        break :blk try std.fmt.allocPrint(allocator, "{s} -g {{file}}:{{line}}", .{editor});
+                    } else {
+                        // Default: just open the file
+                        break :blk try std.fmt.allocPrint(allocator, "{s} {{file}}", .{editor});
+                    }
+                } else {
+                    break :blk "vim +{line} {file}";
+                }
+            };
+            const allocated_action = editor_env != null and action_template == null;
+            defer if (allocated_action) allocator.free(action);
             
             var finder = try interactive_mod.InteractiveFinder.init(allocator, &db, action);
             defer finder.deinit();

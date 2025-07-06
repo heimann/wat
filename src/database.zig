@@ -67,6 +67,7 @@ pub const Database = struct {
             \\    line INTEGER NOT NULL,
             \\    column INTEGER,
             \\    context TEXT,
+            \\    is_definition INTEGER DEFAULT 0,
             \\    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
             \\);
             \\
@@ -293,8 +294,10 @@ pub const Database = struct {
         name: []const u8,
         line: u32,
         column: u32,
+        context: ?[]const u8,
+        is_definition: bool,
     ) !void {
-        const sql = "INSERT INTO refs (file_id, name, line, column) VALUES (?, ?, ?, ?)";
+        const sql = "INSERT INTO refs (file_id, name, line, column, context, is_definition) VALUES (?, ?, ?, ?, ?, ?)";
         
         var stmt: ?*c.sqlite3_stmt = null;
         defer {
@@ -318,18 +321,34 @@ pub const Database = struct {
         result = c.sqlite3_bind_int(stmt, 4, @intCast(column));
         if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
         
+        if (context) |ctx| {
+            result = c.sqlite3_bind_text(stmt, 5, ctx.ptr, @intCast(ctx.len), c.SQLITE_STATIC);
+        } else {
+            result = c.sqlite3_bind_null(stmt, 5);
+        }
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_int(stmt, 6, if (is_definition) 1 else 0);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
         result = c.sqlite3_step(stmt);
         if (result != c.SQLITE_DONE) {
             return DatabaseError.StepFailed;
         }
     }
     
-    pub fn findReferences(self: Self, name: []const u8, allocator: std.mem.Allocator) ![]Reference {
-        const sql = 
-            \\SELECT r.name, r.line, r.column, f.path
+    pub fn findReferences(self: Self, name: []const u8, include_defs: bool, allocator: std.mem.Allocator) ![]Reference {
+        const sql = if (include_defs)
+            \\SELECT r.name, r.line, r.column, f.path, r.context, r.is_definition
             \\FROM refs r
             \\JOIN files f ON r.file_id = f.id
             \\WHERE r.name = ?
+            \\ORDER BY f.path, r.line
+        else
+            \\SELECT r.name, r.line, r.column, f.path, r.context, r.is_definition
+            \\FROM refs r
+            \\JOIN files f ON r.file_id = f.id
+            \\WHERE r.name = ? AND r.is_definition = 0
             \\ORDER BY f.path, r.line
         ;
         
@@ -354,12 +373,17 @@ pub const Database = struct {
             const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
             const column = @as(u32, @intCast(c.sqlite3_column_int(stmt, 2)));
             const path = std.mem.span(c.sqlite3_column_text(stmt, 3));
+            const context_ptr = c.sqlite3_column_text(stmt, 4);
+            const context = if (context_ptr != null) std.mem.span(context_ptr) else null;
+            const is_definition = c.sqlite3_column_int(stmt, 5) != 0;
             
             try references.append(.{
                 .name = try allocator.dupe(u8, ref_name),
                 .line = line,
                 .column = column,
                 .path = try allocator.dupe(u8, path),
+                .context = if (context) |ctx| try allocator.dupe(u8, ctx) else null,
+                .is_definition = is_definition,
             });
         }
         
@@ -385,10 +409,15 @@ pub const Reference = struct {
     line: u32,
     column: u32,
     path: []const u8,
+    context: ?[]const u8,
+    is_definition: bool,
     
     pub fn deinit(self: *Reference, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         allocator.free(self.path);
+        if (self.context) |ctx| {
+            allocator.free(ctx);
+        }
     }
 };
 

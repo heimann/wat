@@ -66,10 +66,24 @@ pub fn main() !void {
         try findCommand(allocator, args[2]);
     } else if (std.mem.eql(u8, args[1], "refs")) {
         if (args.len < 3) {
-            std.debug.print("Usage: {s} refs <symbol>\n", .{args[0]});
+            std.debug.print("Usage: {s} refs <symbol> [--with-context] [--include-defs]\n", .{args[0]});
             return;
         }
-        try refsCommand(allocator, args[2]);
+        
+        var with_context = false;
+        var include_defs = false;
+        
+        // Parse flags
+        var i: usize = 3;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--with-context")) {
+                with_context = true;
+            } else if (std.mem.eql(u8, args[i], "--include-defs")) {
+                include_defs = true;
+            }
+        }
+        
+        try refsCommand(allocator, args[2], with_context, include_defs);
     } else {
         // Default: process single file
         const file_path = args[1];
@@ -467,10 +481,13 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize, debu
 
 fn printUsage(program_name: []const u8) void {
     std.debug.print("Usage:\n", .{});
-    std.debug.print("  {s} <file> [--debug]     Extract symbols from a single file\n", .{program_name});
-    std.debug.print("  {s} index <directory>    Index all supported files in directory\n", .{program_name});
-    std.debug.print("  {s} find <symbol>        Find symbol in indexed database\n", .{program_name});
-    std.debug.print("  {s} refs <symbol>        Find references to symbol\n", .{program_name});
+    std.debug.print("  {s} <file> [--debug]                         Extract symbols from a single file\n", .{program_name});
+    std.debug.print("  {s} index <directory>                        Index all supported files in directory\n", .{program_name});
+    std.debug.print("  {s} find <symbol>                            Find symbol in indexed database\n", .{program_name});
+    std.debug.print("  {s} refs <symbol> [--with-context] [--include-defs]  Find references to symbol\n", .{program_name});
+    std.debug.print("\nOptions for refs:\n", .{});
+    std.debug.print("  --with-context   Show the line of code containing each reference\n", .{});
+    std.debug.print("  --include-defs   Include symbol definitions in the results\n", .{});
 }
 
 fn processFile(allocator: std.mem.Allocator, file_path: []const u8, debug_mode: bool, db: ?*Database) !void {
@@ -619,11 +636,11 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
     }
 }
 
-fn refsCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
+fn refsCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_context: bool, include_defs: bool) !void {
     var db = try Database.init("wat.db");
     defer db.deinit();
     
-    const references = try db.findReferences(symbol_name, allocator);
+    const references = try db.findReferences(symbol_name, include_defs, allocator);
     defer @import("database.zig").deinitReferences(references, allocator);
     
     if (references.len == 0) {
@@ -631,10 +648,51 @@ fn refsCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
         return;
     }
     
+    // Print header
+    if (include_defs) {
+        std.debug.print("References and definitions of '{s}':\n", .{symbol_name});
+    } else {
+        std.debug.print("References to '{s}':\n", .{symbol_name});
+    }
+    
     // Print references
-    std.debug.print("References to '{s}':\n", .{symbol_name});
     for (references) |ref| {
-        std.debug.print("{s}:{d}:{d}\n", .{ ref.path, ref.line, ref.column });
+        if (ref.is_definition) {
+            std.debug.print("[DEF] ", .{});
+        }
+        
+        if (with_context and ref.context != null) {
+            std.debug.print("{s}:{d}:{d}\n", .{ ref.path, ref.line, ref.column });
+            std.debug.print("    {s}\n", .{ref.context.?});
+            
+            // Print a caret under the column position
+            if (ref.column > 0) {
+                var spaces: usize = 4; // 4 spaces for indentation
+                var col: usize = 0;
+                for (ref.context.?) |c| {
+                    if (col >= ref.column - 1) break;
+                    if (c == '\t') {
+                        spaces += 4; // Assume tab width of 4
+                    } else {
+                        spaces += 1;
+                    }
+                    col += 1;
+                }
+                // Print spaces followed by carets for the length of the symbol
+                var j: usize = 0;
+                while (j < spaces) : (j += 1) {
+                    std.debug.print(" ", .{});
+                }
+                // Print carets for the length of the symbol name
+                j = 0;
+                while (j < symbol_name.len) : (j += 1) {
+                    std.debug.print("^", .{});
+                }
+                std.debug.print("\n", .{});
+            }
+        } else {
+            std.debug.print("{s}:{d}:{d}\n", .{ ref.path, ref.line, ref.column });
+        }
     }
 }
 
@@ -667,8 +725,14 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                     const end = child.endByte();
                     const name = source[start..end];
                     const line = child.startPoint().row + 1;
+                    const column = child.startPoint().column + 1;
                     
                     try context.db.insertSymbol(context.file_id, name, line, node_type);
+                    
+                    // Also store as a definition reference
+                    const context_line = getLineContext(source, start, end);
+                    try context.db.insertReference(context.file_id, name, line, column, context_line, true);
+                    
                     found = true;
                     break;
                 } else if (std.mem.eql(u8, child_type, "function_declarator") and
@@ -909,6 +973,22 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
     }
 }
 
+fn getLineContext(source: []const u8, line_start_byte: u32, line_end_byte: u32) []const u8 {
+    // Find the start of the line
+    var start = line_start_byte;
+    while (start > 0 and source[start - 1] != '\n') {
+        start -= 1;
+    }
+    
+    // Find the end of the line
+    var end = line_end_byte;
+    while (end < source.len and source[end] != '\n') {
+        end += 1;
+    }
+    
+    return source[start..end];
+}
+
 fn extractSymbolFromSpecToDatabase(spec_node: tree_sitter.Node, source: []const u8, parent_type: []const u8, context: *DatabaseContext) !void {
     var i: u32 = 0;
     while (i < spec_node.childCount()) : (i += 1) {
@@ -959,8 +1039,11 @@ fn extractReferencesToDatabase(node: tree_sitter.Node, source: []const u8, depth
         const line = point.row + 1;
         const column = point.column + 1;
         
-        // Insert as reference
-        try context.db.insertReference(context.file_id, name, line, column);
+        // Get the context line
+        const context_line = getLineContext(source, start, end);
+        
+        // Insert as reference (not a definition)
+        try context.db.insertReference(context.file_id, name, line, column, context_line, false);
     }
     
     // Recurse through children

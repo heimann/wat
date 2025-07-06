@@ -1,6 +1,7 @@
 const std = @import("std");
 const tree_sitter = @import("tree-sitter");
 const Database = @import("database.zig").Database;
+const GitIgnore = @import("gitignore.zig").GitIgnore;
 
 // Writer instances for proper output handling
 var stdout: std.fs.File.Writer = undefined;
@@ -67,13 +68,16 @@ pub fn main() !void {
 
     // Check for commands
     if (std.mem.eql(u8, args[1], "index")) {
-        if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
-            try stderr.print("Usage: {s} index <directory>\n\n", .{args[0]});
+        if (args.len >= 3 and std.mem.eql(u8, args[2], "--help")) {
+            try stderr.print("Usage: {s} index [directory]\n\n", .{args[0]});
             try stderr.print("Build a searchable index of symbols in the directory.\n", .{});
+            try stderr.print("If no directory is specified, indexes the current directory.\n", .{});
             try stderr.print("Creates or updates wat.db in the current directory.\n", .{});
+            try stderr.print("\nRespects .gitignore files to exclude dependencies and build artifacts.\n", .{});
             return;
         }
-        try indexCommand(allocator, args[2]);
+        const index_path = if (args.len >= 3) args[2] else ".";
+        try indexCommand(allocator, index_path);
     } else if (std.mem.eql(u8, args[1], "find")) {
         // Check for --help or --interactive first
         var is_interactive = false;
@@ -760,22 +764,48 @@ fn indexCommand(allocator: std.mem.Allocator, path: []const u8) !void {
     
     stdout.print("Indexing directory: {s}\n", .{path}) catch {};
     
+    // Load gitignore patterns
+    var gitignore = GitIgnore.init(allocator);
+    defer gitignore.deinit();
+    
+    // Load .gitignore from the root directory being indexed
+    const gitignore_path = try std.fmt.allocPrint(allocator, "{s}/.gitignore", .{path});
+    defer allocator.free(gitignore_path);
+    try gitignore.loadFromFile(gitignore_path);
+    
+    // Add default ignores
+    for (@import("gitignore.zig").DEFAULT_IGNORES) |pattern| {
+        try gitignore.addPattern(pattern);
+    }
+    
     try db.beginTransaction();
     errdefer db.rollback() catch {};
     
     var indexed_count: u32 = 0;
-    try indexDirectory(allocator, path, &db, &indexed_count);
+    try indexDirectoryWithIgnore(allocator, path, &db, &indexed_count, &gitignore, "");
     
     try db.commit();
     stdout.print("Indexed {d} files\n", .{indexed_count}) catch {};
 }
 
-fn indexDirectory(allocator: std.mem.Allocator, path: []const u8, db: *Database, count: *u32) !void {
+fn indexDirectoryWithIgnore(allocator: std.mem.Allocator, path: []const u8, db: *Database, count: *u32, gitignore: *GitIgnore, relative_path: []const u8) !void {
     var dir = try std.fs.cwd().openDir(path, .{ .iterate = true });
     defer dir.close();
     
     var it = dir.iterate();
     while (try it.next()) |entry| {
+        // Build relative path for gitignore checking
+        const entry_relative = if (relative_path.len == 0)
+            try allocator.dupe(u8, entry.name)
+        else
+            try std.fmt.allocPrint(allocator, "{s}/{s}", .{ relative_path, entry.name });
+        defer allocator.free(entry_relative);
+        
+        // Check if this entry should be ignored
+        if (gitignore.shouldIgnore(entry_relative, entry.kind == .directory)) {
+            continue;
+        }
+        
         // Properly join paths avoiding double slashes
         const full_path = if (std.mem.endsWith(u8, path, "/"))
             try std.fmt.allocPrint(allocator, "{s}{s}", .{ path, entry.name })
@@ -785,14 +815,7 @@ fn indexDirectory(allocator: std.mem.Allocator, path: []const u8, db: *Database,
         
         switch (entry.kind) {
             .directory => {
-                // Skip hidden directories and common non-source directories
-                if (!std.mem.startsWith(u8, entry.name, ".") and
-                    !std.mem.eql(u8, entry.name, "node_modules") and
-                    !std.mem.eql(u8, entry.name, "target") and
-                    !std.mem.eql(u8, entry.name, "zig-out") and
-                    !std.mem.eql(u8, entry.name, "zig-cache")) {
-                    try indexDirectory(allocator, full_path, db, count);
-                }
+                try indexDirectoryWithIgnore(allocator, full_path, db, count, gitignore, entry_relative);
             },
             .file => {
                 if (detectLanguage(entry.name) != null) {

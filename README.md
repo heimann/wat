@@ -55,7 +55,8 @@ zig build
 ./zig-out/bin/wat myfile.html # HTML (extracts id attributes)
 
 # Index a directory (creates wat.db in current directory)
-./zig-out/bin/wat index src/
+./zig-out/bin/wat index         # Indexes current directory (respects .gitignore)
+./zig-out/bin/wat index src/    # Index specific directory
 ./zig-out/bin/wat index .
 
 # Find symbols in the indexed database
@@ -241,15 +242,18 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
   - Symbols table: name, line, node_type with file reference
   - Refs table: track all symbol references with context
   - Indexed by symbol name for fast lookups
-- [x] Index entire repositories with `wat index <path>`
+- [x] Index entire repositories with `wat index [path]`
 - [x] Incremental updates for changed files
 - [x] Fast symbol queries with `wat find <symbol>`
+- [x] Respects `.gitignore` files to exclude dependencies and build artifacts
+- [x] Default to current directory when no path specified
 
 **Current Implementation:**
 - Database is stored as `wat.db` in the current working directory
 - Commands must be run from the same directory to access the same database
 - References are extracted with full line context for rich display
 - Symbol definitions are also stored as special references
+- Automatically ignores common directories: deps, _build, node_modules, target, etc.
 - TODO: Make database location configurable (e.g., `--db` flag, project root detection, or ~/.wat/)
 
 ### Phase 4: Smart Context Extraction ✅

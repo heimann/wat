@@ -71,10 +71,20 @@ pub const Database = struct {
             \\    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
             \\);
             \\
+            \\CREATE TABLE IF NOT EXISTS deps (
+            \\    id INTEGER PRIMARY KEY,
+            \\    symbol_id INTEGER NOT NULL,
+            \\    depends_on TEXT NOT NULL,
+            \\    dependency_type TEXT NOT NULL,
+            \\    FOREIGN KEY (symbol_id) REFERENCES symbols(id) ON DELETE CASCADE
+            \\);
+            \\
             \\CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
             \\CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
             \\CREATE INDEX IF NOT EXISTS idx_refs_name ON refs(name);
             \\CREATE INDEX IF NOT EXISTS idx_refs_file ON refs(file_id);
+            \\CREATE INDEX IF NOT EXISTS idx_deps_symbol ON deps(symbol_id);
+            \\CREATE INDEX IF NOT EXISTS idx_deps_depends_on ON deps(depends_on);
         ;
         
         try self.exec(schema);
@@ -145,7 +155,7 @@ pub const Database = struct {
         name: []const u8,
         line: u32,
         node_type: []const u8,
-    ) !void {
+    ) !i64 {
         const sql = "INSERT INTO symbols (file_id, name, line, node_type) VALUES (?, ?, ?, ?)";
         
         var stmt: ?*c.sqlite3_stmt = null;
@@ -174,6 +184,8 @@ pub const Database = struct {
         if (result != c.SQLITE_DONE) {
             return DatabaseError.StepFailed;
         }
+        
+        return c.sqlite3_last_insert_rowid(self.db);
     }
     
     pub fn findSymbol(self: Self, name: []const u8, allocator: std.mem.Allocator) ![]Symbol {
@@ -337,6 +349,102 @@ pub const Database = struct {
         }
     }
     
+    pub fn insertDependency(
+        self: Self,
+        symbol_id: i64,
+        depends_on: []const u8,
+        dependency_type: []const u8,
+    ) !void {
+        const sql = "INSERT INTO deps (symbol_id, depends_on, dependency_type) VALUES (?, ?, ?)";
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_int64(stmt, 1, symbol_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_text(stmt, 2, depends_on.ptr, @intCast(depends_on.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_text(stmt, 3, dependency_type.ptr, @intCast(dependency_type.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_step(stmt);
+        if (result != c.SQLITE_DONE) {
+            return DatabaseError.StepFailed;
+        }
+    }
+    
+    pub fn deleteFileDependencies(self: Self, file_id: i64) !void {
+        const sql = 
+            \\DELETE FROM deps 
+            \\WHERE symbol_id IN (SELECT id FROM symbols WHERE file_id = ?)
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_int64(stmt, 1, file_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_step(stmt);
+        if (result != c.SQLITE_DONE) {
+            return DatabaseError.StepFailed;
+        }
+    }
+    
+    pub fn findDependencies(self: Self, symbol_name: []const u8, allocator: std.mem.Allocator) ![]Dependency {
+        const sql = 
+            \\SELECT DISTINCT d.depends_on, d.dependency_type
+            \\FROM deps d
+            \\JOIN symbols s ON d.symbol_id = s.id
+            \\WHERE s.name = ?
+            \\ORDER BY d.depends_on
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_text(stmt, 1, symbol_name.ptr, @intCast(symbol_name.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        var dependencies = std.ArrayList(Dependency).init(allocator);
+        errdefer dependencies.deinit();
+        
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const depends_on = std.mem.span(c.sqlite3_column_text(stmt, 0));
+            const dependency_type = std.mem.span(c.sqlite3_column_text(stmt, 1));
+            
+            try dependencies.append(.{
+                .depends_on = try allocator.dupe(u8, depends_on),
+                .dependency_type = try allocator.dupe(u8, dependency_type),
+            });
+        }
+        
+        return dependencies.toOwnedSlice();
+    }
+    
     pub fn findReferences(self: Self, name: []const u8, include_defs: bool, allocator: std.mem.Allocator) ![]Reference {
         const sql = if (include_defs)
             \\SELECT r.name, r.line, r.column, f.path, r.context, r.is_definition
@@ -421,6 +529,16 @@ pub const Reference = struct {
     }
 };
 
+pub const Dependency = struct {
+    depends_on: []const u8,
+    dependency_type: []const u8,
+    
+    pub fn deinit(self: *Dependency, allocator: std.mem.Allocator) void {
+        allocator.free(self.depends_on);
+        allocator.free(self.dependency_type);
+    }
+};
+
 pub fn deinitSymbols(symbols: []Symbol, allocator: std.mem.Allocator) void {
     for (symbols) |*sym| {
         sym.deinit(allocator);
@@ -433,4 +551,11 @@ pub fn deinitReferences(references: []Reference, allocator: std.mem.Allocator) v
         ref.deinit(allocator);
     }
     allocator.free(references);
+}
+
+pub fn deinitDependencies(dependencies: []Dependency, allocator: std.mem.Allocator) void {
+    for (dependencies) |*dep| {
+        dep.deinit(allocator);
+    }
+    allocator.free(dependencies);
 }

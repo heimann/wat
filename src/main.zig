@@ -90,6 +90,12 @@ pub fn main() !void {
             return;
         }
         try contextCommand(allocator, args[2]);
+    } else if (std.mem.eql(u8, args[1], "deps")) {
+        if (args.len < 3) {
+            std.debug.print("Usage: {s} deps <symbol>\n", .{args[0]});
+            return;
+        }
+        try depsCommand(allocator, args[2]);
     } else {
         // Default: process single file
         const file_path = args[1];
@@ -529,9 +535,10 @@ fn processFile(allocator: std.mem.Allocator, file_path: []const u8, debug_mode: 
             // Insert file into database
             const file_id = try database.insertFile(file_path, last_modified, lang_name);
             
-            // Delete old symbols and references for this file
+            // Delete old symbols, references, and dependencies for this file
             try database.deleteFileSymbols(file_id);
             try database.deleteFileReferences(file_id);
+            try database.deleteFileDependencies(file_id);
             
             // Extract symbols to database
             var context = DatabaseContext{
@@ -926,10 +933,150 @@ fn extractDocumentation(node: tree_sitter.Node, source: []const u8, allocator: s
     return docs.toOwnedSlice() catch null;
 }
 
+fn extractSymbolDependencies(node: tree_sitter.Node, source: []const u8, context: *DatabaseContext) !void {
+    if (context.current_symbol_id == null) return;
+    
+    // Walk through the symbol body and find all identifiers that could be dependencies
+    try extractDependenciesRecursive(node, source, context);
+}
+
+fn extractDependenciesRecursive(node: tree_sitter.Node, source: []const u8, context: *DatabaseContext) !void {
+    const node_type = node.kind();
+    
+    // Handle function calls
+    if (std.mem.eql(u8, node_type, "call_expression") or
+        std.mem.eql(u8, node_type, "function_call_expression") or
+        std.mem.eql(u8, node_type, "method_call_expression") or
+        std.mem.eql(u8, node_type, "invocation_expression") or
+        std.mem.eql(u8, node_type, "call")) {
+        
+        // Find the function identifier
+        if (node.child(0)) |func_node| {
+            if (std.mem.eql(u8, func_node.kind(), "identifier") or
+                std.mem.eql(u8, func_node.kind(), "field_expression") or
+                std.mem.eql(u8, func_node.kind(), "member_expression")) {
+                
+                const identifier = extractIdentifierName(func_node, source);
+                if (identifier) |name| {
+                    if (context.current_symbol_id) |symbol_id| {
+                        context.db.insertDependency(symbol_id, name, "calls") catch {};
+                    }
+                }
+            }
+        }
+    }
+    
+    // Handle type references
+    else if (std.mem.eql(u8, node_type, "type_identifier") or
+             std.mem.eql(u8, node_type, "type_reference") or
+             std.mem.eql(u8, node_type, "named_type")) {
+        const start = node.startByte();
+        const end = node.endByte();
+        const name = source[start..end];
+        
+        if (context.current_symbol_id) |symbol_id| {
+            context.db.insertDependency(symbol_id, name, "uses_type") catch {};
+        }
+    }
+    
+    // Handle imports (language-specific)
+    else if (std.mem.eql(u8, node_type, "import_statement") or
+             std.mem.eql(u8, node_type, "import_declaration") or
+             std.mem.eql(u8, node_type, "use_declaration")) {
+        // Extract imported symbols
+        var i: u32 = 0;
+        while (i < node.childCount()) : (i += 1) {
+            if (node.child(i)) |child| {
+                if (std.mem.eql(u8, child.kind(), "identifier") or
+                    std.mem.eql(u8, child.kind(), "string_literal")) {
+                    const start = child.startByte();
+                    const end = child.endByte();
+                    var name = source[start..end];
+                    
+                    // Remove quotes from string literals
+                    if (name.len > 2 and (name[0] == '"' or name[0] == '\'')) {
+                        name = name[1..name.len-1];
+                    }
+                    
+                    if (context.current_symbol_id) |symbol_id| {
+                        context.db.insertDependency(symbol_id, name, "imports") catch {};
+                    }
+                }
+            }
+        }
+    }
+    
+    // Recurse through children
+    var i: u32 = 0;
+    while (i < node.childCount()) : (i += 1) {
+        if (node.child(i)) |child| {
+            try extractDependenciesRecursive(child, source, context);
+        }
+    }
+}
+
+fn extractIdentifierName(node: tree_sitter.Node, source: []const u8) ?[]const u8 {
+    const node_type = node.kind();
+    
+    if (std.mem.eql(u8, node_type, "identifier")) {
+        const start = node.startByte();
+        const end = node.endByte();
+        return source[start..end];
+    }
+    
+    // For field/member expressions, get the last identifier
+    if (std.mem.eql(u8, node_type, "field_expression") or
+        std.mem.eql(u8, node_type, "member_expression")) {
+        var i = node.childCount();
+        while (i > 0) {
+            i -= 1;
+            if (node.child(i)) |child| {
+                if (std.mem.eql(u8, child.kind(), "identifier") or
+                    std.mem.eql(u8, child.kind(), "property_identifier") or
+                    std.mem.eql(u8, child.kind(), "field_identifier")) {
+                    const start = child.startByte();
+                    const end = child.endByte();
+                    return source[start..end];
+                }
+            }
+        }
+    }
+    
+    return null;
+}
+
+fn depsCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
+    var db = try Database.init("wat.db");
+    defer db.deinit();
+    
+    // Find dependencies for the symbol
+    const dependencies = try db.findDependencies(symbol_name, allocator);
+    defer @import("database.zig").deinitDependencies(dependencies, allocator);
+    
+    if (dependencies.len == 0) {
+        std.debug.print("No dependencies found for '{s}'\n", .{symbol_name});
+        return;
+    }
+    
+    // Group dependencies by type
+    std.debug.print("Dependencies of '{s}':\n", .{symbol_name});
+    std.debug.print("=" ** 40 ++ "\n", .{});
+    
+    var current_type: ?[]const u8 = null;
+    for (dependencies) |dep| {
+        if (current_type == null or !std.mem.eql(u8, current_type.?, dep.dependency_type)) {
+            current_type = dep.dependency_type;
+            std.debug.print("\n{s}:\n", .{dep.dependency_type});
+        }
+        std.debug.print("  - {s}\n", .{dep.depends_on});
+    }
+}
+
 const DatabaseContext = struct {
     db: *Database,
     file_id: i64,
     allocator: std.mem.Allocator,
+    current_symbol_id: ?i64 = null,
 };
 
 fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: usize, context: *DatabaseContext) !void {
@@ -957,11 +1104,16 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                     const line = child.startPoint().row + 1;
                     const column = child.startPoint().column + 1;
                     
-                    try context.db.insertSymbol(context.file_id, name, line, node_type);
+                    const symbol_id = try context.db.insertSymbol(context.file_id, name, line, node_type);
                     
                     // Also store as a definition reference
                     const context_line = getLineContext(source, start, end);
                     try context.db.insertReference(context.file_id, name, line, column, context_line, true);
+                    
+                    // Extract dependencies for this symbol
+                    context.current_symbol_id = symbol_id;
+                    try extractSymbolDependencies(node, source, context);
+                    context.current_symbol_id = null;
                     
                     found = true;
                     break;
@@ -969,7 +1121,13 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                            std.mem.eql(u8, node_type, "function_definition")) {
                     // C function definitions have function_declarator child
                     if (extractIdentifierFromDeclarator(child, source)) |id| {
-                        try context.db.insertSymbol(context.file_id, id.name, id.line, node_type);
+                        const symbol_id = try context.db.insertSymbol(context.file_id, id.name, id.line, node_type);
+                        
+                        // Extract dependencies for this symbol
+                        context.current_symbol_id = symbol_id;
+                        try extractSymbolDependencies(node, source, context);
+                        context.current_symbol_id = null;
+                        
                         found = true;
                         break;
                     }
@@ -977,14 +1135,14 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                            std.mem.eql(u8, node_type, "declaration")) {
                     // C variable declarations
                     if (extractIdentifierFromDeclarator(child, source)) |id| {
-                        try context.db.insertSymbol(context.file_id, id.name, id.line, node_type);
+                        _ = try context.db.insertSymbol(context.file_id, id.name, id.line, node_type);
                         found = true;
                     }
                 } else if (std.mem.eql(u8, child_type, "function_declarator") and
                            std.mem.eql(u8, node_type, "declaration")) {
                     // C function declarations (prototypes)
                     if (extractIdentifierFromDeclarator(child, source)) |id| {
-                        try context.db.insertSymbol(context.file_id, id.name, id.line, node_type);
+                        _ = try context.db.insertSymbol(context.file_id, id.name, id.line, node_type);
                         found = true;
                     }
                 } else if ((std.mem.eql(u8, child_type, "parenthesized_declarator") or
@@ -992,7 +1150,7 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                            std.mem.eql(u8, node_type, "type_definition")) {
                     // C typedef for function pointers
                     if (extractIdentifierFromDeclarator(child, source)) |id| {
-                        try context.db.insertSymbol(context.file_id, id.name, id.line, node_type);
+                        _ = try context.db.insertSymbol(context.file_id, id.name, id.line, node_type);
                         found = true;
                         break;
                     }
@@ -1010,7 +1168,7 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                 const name = source[start..end];
                 const line = left.startPoint().row + 1;
                 
-                try context.db.insertSymbol(context.file_id, name, line, "assignment");
+                _ = try context.db.insertSymbol(context.file_id, name, line, "assignment");
             }
         }
     }
@@ -1029,7 +1187,7 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                             const name = source[start..end];
                             const line = id_node.startPoint().row + 1;
                             
-                            try context.db.insertSymbol(context.file_id, name, line, node_type);
+                            _ = try context.db.insertSymbol(context.file_id, name, line, node_type);
                         }
                     }
                 }
@@ -1048,7 +1206,7 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                     const name = source[start..end];
                     const line = child.startPoint().row + 1;
                     
-                    try context.db.insertSymbol(context.file_id, name, line, node_type);
+                    _ = try context.db.insertSymbol(context.file_id, name, line, node_type);
                     break;
                 }
             }
@@ -1064,7 +1222,7 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                 const name = source[start..end];
                 const line = id_node.startPoint().row + 1;
                 
-                try context.db.insertSymbol(context.file_id, name, line, node_type);
+                _ = try context.db.insertSymbol(context.file_id, name, line, node_type);
             }
         }
     }
@@ -1082,7 +1240,7 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                             const name = source[start..end];
                             const line = id_node.startPoint().row + 1;
                             
-                            try context.db.insertSymbol(context.file_id, name, line, node_type);
+                            _ = try context.db.insertSymbol(context.file_id, name, line, node_type);
                         }
                     }
                 }
@@ -1113,7 +1271,7 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                                     const n_end = name_node.endByte();
                                     const name = source[n_start..n_end];
                                     const line = name_node.startPoint().row + 1;
-                                    try context.db.insertSymbol(context.file_id, name, line, call_type);
+                                    _ = try context.db.insertSymbol(context.file_id, name, line, call_type);
                                 } else if (std.mem.eql(u8, name_node.kind(), "identifier") or
                                            std.mem.eql(u8, name_node.kind(), "atom")) {
                                     const n_start = name_node.startByte();
@@ -1123,7 +1281,7 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                                         name = name[1..];
                                     }
                                     const line = name_node.startPoint().row + 1;
-                                    try context.db.insertSymbol(context.file_id, name, line, call_type);
+                                    _ = try context.db.insertSymbol(context.file_id, name, line, call_type);
                                 } else if (std.mem.eql(u8, name_node.kind(), "call")) {
                                     if (name_node.child(0)) |func_name| {
                                         if (std.mem.eql(u8, func_name.kind(), "identifier")) {
@@ -1131,7 +1289,7 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                                             const n_end = func_name.endByte();
                                             const name = source[n_start..n_end];
                                             const line = func_name.startPoint().row + 1;
-                                            try context.db.insertSymbol(context.file_id, name, line, call_type);
+                                            _ = try context.db.insertSymbol(context.file_id, name, line, call_type);
                                         }
                                     }
                                 }
@@ -1177,7 +1335,7 @@ fn extractSymbolsToDatabase(node: tree_sitter.Node, source: []const u8, depth: u
                                                         }
                                                         
                                                         const line = attr_child.startPoint().row + 1;
-                                                        try context.db.insertSymbol(context.file_id, id_value, line, "id_attribute");
+                                                        _ = try context.db.insertSymbol(context.file_id, id_value, line, "id_attribute");
                                                         break;
                                                     }
                                                 }
@@ -1230,7 +1388,7 @@ fn extractSymbolFromSpecToDatabase(spec_node: tree_sitter.Node, source: []const 
                 const name = source[start..end];
                 const line = child.startPoint().row + 1;
                 
-                try context.db.insertSymbol(context.file_id, name, line, parent_type);
+                _ = try context.db.insertSymbol(context.file_id, name, line, parent_type);
                 break;
             }
         }

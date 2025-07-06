@@ -78,6 +78,10 @@ zig build
 # Get full context of symbol definitions with documentation
 ./zig-out/bin/wat context Database
 ./zig-out/bin/wat context myFunction
+
+# Show what a symbol depends on
+./zig-out/bin/wat deps processFile
+./zig-out/bin/wat deps Database
 ```
 
 ## Usage (Future)
@@ -106,6 +110,8 @@ wat *.ts  # TypeScript files
 - Incremental indexing based on file modification times
 - Reference tracking with code context
 - Rich output formatting with `--with-context` flag
+- Full context extraction with documentation comments
+- Dependency analysis showing what symbols depend on
 
 **Recent Additions:**
 - Enhanced `wat refs` command with context display and definition tracking
@@ -113,6 +119,7 @@ wat *.ts  # TypeScript files
 - Caret indicators showing exact symbol location in code
 - Ability to include/exclude definitions in reference results
 - `wat context` command shows full symbol definitions with documentation comments
+- `wat deps` command analyzes and displays symbol dependencies
 
 ## Roadmap
 
@@ -158,13 +165,13 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 - Symbol definitions are also stored as special references
 - TODO: Make database location configurable (e.g., `--db` flag, project root detection, or ~/.wat/)
 
-### Phase 4: Smart Context Extraction (IN PROGRESS 🚧)
+### Phase 4: Smart Context Extraction ✅
 - [x] `wat find <symbol>` - Find symbol definition
 - [x] `wat refs <symbol>` - Find all references
   - `--with-context` - Show line of code with caret indicators
   - `--include-defs` - Include definitions marked with [DEF]
 - [x] `wat context <symbol>` - Get symbol with smart context (full function/type definition with documentation)
-- [ ] `wat deps <symbol>` - Show symbol dependencies
+- [x] `wat deps <symbol>` - Show symbol dependencies (calls, type usage, imports)
 
 ### Phase 5: Extended Language Support
 - [ ] Add more languages based on user demand

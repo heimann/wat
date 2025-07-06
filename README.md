@@ -44,6 +44,7 @@ zig build
 ./zig-out/bin/wat myfile.zig  # Zig
 ./zig-out/bin/wat myfile.go   # Go
 ./zig-out/bin/wat myfile.py   # Python
+./zig-out/bin/wat myfile.js   # JavaScript
 ```
 
 ## Usage (Future)
@@ -71,11 +72,26 @@ wat *.ts  # TypeScript files
 - [x] Symbol extraction for Zig
 - [x] Command-line interface
 
-### Phase 2: Multi-Language Support
-- [ ] Bundle tree-sitter grammars for: Go, Elixir, Java, Python, JavaScript, TypeScript, Rust, Zig, HTML, C
-- [ ] Language auto-detection based on file extensions
-- [ ] Language-specific symbol extraction rules
-- [ ] Unified symbol output format across languages
+### Phase 2: Multi-Language Support (In Progress)
+- [x] Bundle tree-sitter grammars for: Go, Python, JavaScript
+- [ ] Bundle tree-sitter grammars for: TypeScript, Rust, C, Java, Elixir, HTML
+- [x] Language auto-detection based on file extensions  
+- [x] Language-specific symbol extraction rules
+- [x] Unified symbol output format across languages
+
+**Current Status:**
+- ✅ Zig (built-in) - functions, types, variables, tests
+- ✅ Go (v0.23.4) - functions, types, constants, variables
+- ✅ Python (v0.23.6) - functions, classes, assignments (includes scanner.c)
+- ✅ JavaScript (v0.23.1) - functions, classes, methods, const/let/var (includes scanner.c)
+- 📋 TypeScript - Next to implement
+- 📋 Rust - Planned
+- 📋 C - Planned
+- 📋 Java - Planned
+- 📋 Elixir - Planned
+- 📋 HTML - Planned
+
+Binary size: 6.1MB (grows ~0.5-0.6MB per language)
 
 ### Phase 3: Persistent Index
 - [ ] SQLite-based symbol database
@@ -292,6 +308,44 @@ fi
 #### 10. Test and Commit
 
 Run `make test` to ensure everything works, then commit with a descriptive message.
+
+## Continuing Development
+
+If you're picking up development in a new Claude Code instance:
+
+### Quick Status Check
+```bash
+# See what languages are supported
+./zig-out/bin/wat tests/fixtures/simple.zig  # Should work
+./zig-out/bin/wat tests/fixtures/simple.go   # Should work
+./zig-out/bin/wat tests/fixtures/simple.py   # Should work
+./zig-out/bin/wat tests/fixtures/simple.js   # Should work
+
+# Run tests
+make test  # Should show all 4 languages passing
+
+# Check binary size
+ls -lh ./zig-out/bin/wat  # Should be ~6.1MB
+```
+
+### Next Steps
+1. **TypeScript** is next - follow the guide above to add it
+2. Remember to check for scanner.c files (Python and JS have them)
+3. Each language adds ~0.5-0.6MB to binary size
+4. Keep the "extract everything" philosophy - include private methods, local variables, etc.
+
+### Key Files to Know
+- `src/main.zig` - Language detection and symbol extraction logic
+- `build.zig` - Grammar compilation configuration  
+- `build.zig.zon` - Grammar dependencies
+- `tests/test_smoke.sh` - Test script that verifies all languages work
+- `tests/fixtures/simple.*` - Test files for each language
+
+### Design Decisions Made
+- Extract ALL symbols (including `__init__`, local variables, etc.)
+- Use simple tab-separated output format
+- Bundle all grammars into single binary (no plugins)
+- Support common file extensions (.js/.mjs, etc.)
 
 ## License
 

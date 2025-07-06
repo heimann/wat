@@ -77,8 +77,10 @@ pub fn main() !void {
             try stderr.print("  --with-deps      Show count of dependencies from the symbol\n", .{});
             try stderr.print("  --full-context   Show full symbol definition with documentation\n", .{});
             try stderr.print("  --fuzzy          Force fuzzy matching (prefix, suffix, contains)\n", .{});
+            try stderr.print("  --strict         Disable automatic fuzzy matching fallback\n", .{});
             try stderr.print("  --help           Show this help message\n", .{});
             try stderr.print("\nNote: Fuzzy matching is automatically used when no exact matches are found.\n", .{});
+            try stderr.print("      Use --strict to disable this behavior.\n", .{});
             return;
         }
         
@@ -87,6 +89,7 @@ pub fn main() !void {
         var full_context = false;
         var with_deps = false;
         var fuzzy = false;
+        var strict = false;
         
         // Parse flags
         var i: usize = 3;
@@ -101,10 +104,12 @@ pub fn main() !void {
                 with_deps = true;
             } else if (std.mem.eql(u8, args[i], "--fuzzy")) {
                 fuzzy = true;
+            } else if (std.mem.eql(u8, args[i], "--strict")) {
+                strict = true;
             }
         }
         
-        try findCommand(allocator, args[2], with_context, with_refs, full_context, with_deps, fuzzy);
+        try findCommand(allocator, args[2], with_context, with_refs, full_context, with_deps, fuzzy, strict);
     } else if (std.mem.eql(u8, args[1], "refs")) {
         if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
             try stderr.print("Usage: {s} refs <symbol> [options]\n\n", .{args[0]});
@@ -722,7 +727,7 @@ fn indexDirectory(allocator: std.mem.Allocator, path: []const u8, db: *Database,
     }
 }
 
-fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_context: bool, with_refs: bool, full_context: bool, with_deps: bool, fuzzy: bool) !void {
+fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_context: bool, with_refs: bool, full_context: bool, with_deps: bool, fuzzy: bool, strict: bool) !void {
     var db = try Database.init("wat.db");
     defer db.deinit();
     
@@ -730,8 +735,8 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_conte
     const symbols = try db.findSymbol(symbol_name, allocator);
     defer @import("database.zig").deinitSymbols(symbols, allocator);
     
-    // If no exact matches, try fuzzy matching (either explicit or automatic fallback)
-    if (symbols.len == 0) {
+    // If no exact matches and strict mode is disabled, try fuzzy matching
+    if (symbols.len == 0 and !strict) {
         const fuzzy_matches = try db.findSymbolFuzzy(symbol_name, allocator);
         defer @import("database.zig").deinitSymbolMatches(fuzzy_matches, allocator);
         
@@ -803,6 +808,12 @@ fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_conte
                 }
             }
         }
+        return;
+    }
+    
+    // If no exact matches and strict mode is enabled, report not found
+    if (symbols.len == 0 and strict) {
+        stderr.print("Symbol '{s}' not found\n", .{symbol_name}) catch {};
         return;
     }
     

@@ -73,6 +73,9 @@ zig build
 ./zig-out/bin/wat find init --fuzzy                  # Force fuzzy: finds init, initialize, initConfig
 ./zig-out/bin/wat find base --fuzzy                  # Force fuzzy: finds Database, database, base_url
 
+# Strict mode (disable automatic fuzzy fallback)
+./zig-out/bin/wat find Data --strict                 # No match: returns error if not found exactly
+
 # Combine multiple flags
 ./zig-out/bin/wat find main --with-context --with-refs --with-deps
 ./zig-out/bin/wat find extract --fuzzy --with-context
@@ -212,6 +215,7 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
   - `--full-context` - Show full symbol definition with documentation
   - `--with-deps` - Show count of dependencies
   - `--fuzzy` - Force fuzzy matching (automatic when no exact match)
+  - `--strict` - Disable automatic fuzzy matching fallback
 - [x] `wat refs <symbol>` - Find all references
   - `--with-context` - Show line of code with caret indicators
   - `--include-defs` - Include definitions marked with [DEF]

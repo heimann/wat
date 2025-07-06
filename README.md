@@ -68,8 +68,14 @@ zig build
 ./zig-out/bin/wat find Database --with-deps          # Show dependency count
 ./zig-out/bin/wat find Database --full-context       # Show full definition with docs
 
+# Fuzzy matching for partial or approximate matches
+./zig-out/bin/wat find init --fuzzy                  # Finds init, initialize, initConfig, etc.
+./zig-out/bin/wat find Symb --fuzzy                  # Finds Symbol, SymbolMatch, symbols, etc.
+./zig-out/bin/wat find base --fuzzy                  # Finds Database, database, base_url, etc.
+
 # Combine multiple flags
 ./zig-out/bin/wat find main --with-context --with-refs --with-deps
+./zig-out/bin/wat find extract --fuzzy --with-context
 
 # Find references to symbols
 ./zig-out/bin/wat refs Database
@@ -143,6 +149,7 @@ main()
 - Rich output formatting with `--with-context` flag
 - Full context extraction with documentation comments
 - Dependency analysis showing what symbols depend on
+- Fuzzy matching with `--fuzzy` flag for finding symbols with partial names
 
 **Recent Additions:**
 - Enhanced `wat refs` command with context display and definition tracking
@@ -152,6 +159,7 @@ main()
 - `wat context` command shows full symbol definitions with documentation comments
 - `wat deps` command analyzes and displays symbol dependencies
 - `wat map` command shows call tree structure of the application
+- Fuzzy matching support with `--fuzzy` flag for partial name matches (prefix, suffix, contains)
 
 ## Roadmap
 
@@ -203,6 +211,7 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
   - `--with-refs` - Show count of references
   - `--full-context` - Show full symbol definition with documentation
   - `--with-deps` - Show count of dependencies
+  - `--fuzzy` - Enable fuzzy matching for partial names
 - [x] `wat refs <symbol>` - Find all references
   - `--with-context` - Show line of code with caret indicators
   - `--include-defs` - Include definitions marked with [DEF]

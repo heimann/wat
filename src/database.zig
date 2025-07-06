@@ -233,6 +233,136 @@ pub const Database = struct {
         return symbols.toOwnedSlice();
     }
     
+    pub fn findSymbolFuzzy(self: Self, pattern: []const u8, allocator: std.mem.Allocator) ![]SymbolMatch {
+        const sql = 
+            \\SELECT DISTINCT s.name, s.line, s.node_type, f.path
+            \\FROM symbols s
+            \\JOIN files f ON s.file_id = f.id
+            \\WHERE LOWER(s.name) LIKE LOWER(?)
+            \\   OR LOWER(s.name) LIKE LOWER(?)
+            \\   OR LOWER(s.name) LIKE LOWER(?)
+            \\ORDER BY s.name, f.path, s.line
+            \\LIMIT 50
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        // Create patterns for different match types
+        const pattern_contains = try std.fmt.allocPrint(allocator, "%{s}%", .{pattern});
+        defer allocator.free(pattern_contains);
+        
+        const pattern_prefix = try std.fmt.allocPrint(allocator, "{s}%", .{pattern});
+        defer allocator.free(pattern_prefix);
+        
+        const pattern_suffix = try std.fmt.allocPrint(allocator, "%{s}", .{pattern});
+        defer allocator.free(pattern_suffix);
+        
+        // Bind all three patterns
+        result = c.sqlite3_bind_text(stmt, 1, pattern_contains.ptr, @intCast(pattern_contains.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_text(stmt, 2, pattern_prefix.ptr, @intCast(pattern_prefix.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_text(stmt, 3, pattern_suffix.ptr, @intCast(pattern_suffix.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        var matches = std.ArrayList(SymbolMatch).init(allocator);
+        errdefer {
+            for (matches.items) |*match| {
+                match.deinit(allocator);
+            }
+            matches.deinit();
+        }
+        
+        // Track seen symbols to avoid duplicates
+        var seen = std.StringHashMap(void).init(allocator);
+        defer {
+            var it = seen.iterator();
+            while (it.next()) |entry| {
+                allocator.free(entry.key_ptr.*);
+            }
+            seen.deinit();
+        }
+        
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const sym_name = std.mem.span(c.sqlite3_column_text(stmt, 0));
+            const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
+            const node_type = std.mem.span(c.sqlite3_column_text(stmt, 2));
+            const path = std.mem.span(c.sqlite3_column_text(stmt, 3));
+            
+            // Create a unique key for this symbol
+            const key = try std.fmt.allocPrint(allocator, "{s}:{s}:{d}", .{ sym_name, path, line });
+            
+            if (seen.contains(key)) {
+                allocator.free(key);
+                continue;
+            }
+            try seen.put(try allocator.dupe(u8, key), {});
+            allocator.free(key);
+            
+            // Calculate score based on match type
+            var score: u32 = 0;
+            var match_type: []const u8 = "";
+            
+            // Check for exact match (case-insensitive)
+            if (std.ascii.eqlIgnoreCase(sym_name, pattern)) {
+                score = 100;
+                match_type = "exact";
+            } else if (std.ascii.startsWithIgnoreCase(sym_name, pattern)) {
+                score = 80;
+                match_type = "prefix";
+            } else if (std.ascii.endsWithIgnoreCase(sym_name, pattern)) {
+                score = 60;
+                match_type = "suffix";
+            } else {
+                score = 40;
+                match_type = "contains";
+            }
+            
+            try matches.append(.{
+                .symbol = .{
+                    .name = try allocator.dupe(u8, sym_name),
+                    .line = line,
+                    .node_type = try allocator.dupe(u8, node_type),
+                    .path = try allocator.dupe(u8, path),
+                },
+                .score = score,
+                .match_type = try allocator.dupe(u8, match_type),
+            });
+        }
+        
+        // Sort by score (highest first)
+        std.mem.sort(SymbolMatch, matches.items, {}, struct {
+            fn lessThan(_: void, a: SymbolMatch, b: SymbolMatch) bool {
+                if (a.score != b.score) {
+                    return a.score > b.score;
+                }
+                // If scores are equal, sort by name
+                return std.mem.lessThan(u8, a.symbol.name, b.symbol.name);
+            }
+        }.lessThan);
+        
+        // Limit to top 20 matches
+        if (matches.items.len > 20) {
+            // Free the items we're discarding
+            for (matches.items[20..]) |*match| {
+                match.deinit(allocator);
+            }
+            matches.items.len = 20;
+        }
+        
+        return matches.toOwnedSlice();
+    }
+    
     pub fn needsReindex(self: Self, path: []const u8, last_modified: i64) !bool {
         const sql = "SELECT last_modified FROM files WHERE path = ?";
         
@@ -648,6 +778,17 @@ pub const Symbol = struct {
     }
 };
 
+pub const SymbolMatch = struct {
+    symbol: Symbol,
+    score: u32,
+    match_type: []const u8,
+    
+    pub fn deinit(self: *SymbolMatch, allocator: std.mem.Allocator) void {
+        self.symbol.deinit(allocator);
+        allocator.free(self.match_type);
+    }
+};
+
 pub const Reference = struct {
     name: []const u8,
     line: u32,
@@ -712,4 +853,11 @@ pub fn deinitDependencies(dependencies: []Dependency, allocator: std.mem.Allocat
         dep.deinit(allocator);
     }
     allocator.free(dependencies);
+}
+
+pub fn deinitSymbolMatches(matches: []SymbolMatch, allocator: std.mem.Allocator) void {
+    for (matches) |*match| {
+        match.deinit(allocator);
+    }
+    allocator.free(matches);
 }

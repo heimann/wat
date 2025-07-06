@@ -76,6 +76,7 @@ pub fn main() !void {
             try stderr.print("  --with-refs      Show count of references to the symbol\n", .{});
             try stderr.print("  --with-deps      Show count of dependencies from the symbol\n", .{});
             try stderr.print("  --full-context   Show full symbol definition with documentation\n", .{});
+            try stderr.print("  --fuzzy          Enable fuzzy matching (prefix, suffix, contains)\n", .{});
             try stderr.print("  --help           Show this help message\n", .{});
             return;
         }
@@ -84,6 +85,7 @@ pub fn main() !void {
         var with_refs = false;
         var full_context = false;
         var with_deps = false;
+        var fuzzy = false;
         
         // Parse flags
         var i: usize = 3;
@@ -96,10 +98,12 @@ pub fn main() !void {
                 full_context = true;
             } else if (std.mem.eql(u8, args[i], "--with-deps")) {
                 with_deps = true;
+            } else if (std.mem.eql(u8, args[i], "--fuzzy")) {
+                fuzzy = true;
             }
         }
         
-        try findCommand(allocator, args[2], with_context, with_refs, full_context, with_deps);
+        try findCommand(allocator, args[2], with_context, with_refs, full_context, with_deps, fuzzy);
     } else if (std.mem.eql(u8, args[1], "refs")) {
         if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
             try stderr.print("Usage: {s} refs <symbol> [options]\n\n", .{args[0]});
@@ -581,6 +585,7 @@ fn printUsage(program_name: []const u8) void {
     stdout.print("  {s} map [options]                            Show call tree structure\n", .{program_name}) catch {};
     stdout.print("\nFor help on specific commands, use:\n", .{}) catch {};
     stdout.print("  {s} <command> --help\n", .{program_name}) catch {};
+    stdout.print("\nTip: Use 'find <pattern> --fuzzy' for fuzzy matching\n", .{}) catch {};
 }
 
 fn processFile(allocator: std.mem.Allocator, file_path: []const u8, debug_mode: bool, db: ?*Database) !void {
@@ -716,15 +721,86 @@ fn indexDirectory(allocator: std.mem.Allocator, path: []const u8, db: *Database,
     }
 }
 
-fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_context: bool, with_refs: bool, full_context: bool, with_deps: bool) !void {
+fn findCommand(allocator: std.mem.Allocator, symbol_name: []const u8, with_context: bool, with_refs: bool, full_context: bool, with_deps: bool, fuzzy: bool) !void {
     var db = try Database.init("wat.db");
     defer db.deinit();
     
+    // Try exact match first
     const symbols = try db.findSymbol(symbol_name, allocator);
     defer @import("database.zig").deinitSymbols(symbols, allocator);
     
-    if (symbols.len == 0) {
+    if (symbols.len == 0 and !fuzzy) {
         stderr.print("Symbol '{s}' not found\n", .{symbol_name}) catch {};
+        return;
+    }
+    
+    // If no exact matches and fuzzy is enabled, try fuzzy matching
+    if (symbols.len == 0 and fuzzy) {
+        const fuzzy_matches = try db.findSymbolFuzzy(symbol_name, allocator);
+        defer @import("database.zig").deinitSymbolMatches(fuzzy_matches, allocator);
+        
+        if (fuzzy_matches.len == 0) {
+            stderr.print("No symbols matching '{s}' found\n", .{symbol_name}) catch {};
+            return;
+        }
+        
+        // Process fuzzy matches
+        stdout.print("Fuzzy matches for '{s}':\n", .{symbol_name}) catch {};
+        for (fuzzy_matches) |match| {
+            // Basic format with match info
+            try stdout.print("[{s}:{d}] {s}\t{s}\t{d}\t{s}", 
+                .{ match.match_type, match.score, match.symbol.name, match.symbol.path, 
+                   match.symbol.line, match.symbol.node_type });
+            
+            // Add reference count if requested
+            if (with_refs) {
+                const refs_count = try db.getReferencesCount(match.symbol.name);
+                try stdout.print("\trefs: {d}", .{refs_count});
+            }
+            
+            // Add dependency count if requested
+            if (with_deps) {
+                const deps_count = try db.getDependenciesCount(match.symbol.name);
+                try stdout.print("\tdeps: {d}", .{deps_count});
+            }
+            
+            try stdout.print("\n", .{});
+            
+            // Show line context if requested
+            if (with_context) {
+                const file = try std.fs.cwd().openFile(match.symbol.path, .{});
+                defer file.close();
+                
+                const content = try file.readToEndAlloc(allocator, 10 * 1024 * 1024);
+                defer allocator.free(content);
+                
+                // Find the line
+                var line_count: u32 = 1;
+                var line_start: usize = 0;
+                var line_end: usize = 0;
+                
+                for (content, 0..) |char, idx| {
+                    if (char == '\n') {
+                        if (line_count == match.symbol.line) {
+                            line_end = idx;
+                            break;
+                        }
+                        line_count += 1;
+                        line_start = idx + 1;
+                    }
+                }
+                
+                // Handle last line without newline
+                if (line_count == match.symbol.line and line_end == 0) {
+                    line_end = content.len;
+                }
+                
+                if (line_start < content.len and line_end > line_start) {
+                    const line_content = content[line_start..line_end];
+                    try stdout.print("  {s}\n", .{line_content});
+                }
+            }
+        }
         return;
     }
     

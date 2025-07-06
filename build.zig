@@ -43,6 +43,17 @@ pub fn build(b: *std.Build) void {
     });
     exe.addIncludePath(tree_sitter_python.path("src"));
 
+    const tree_sitter_javascript = b.dependency("tree_sitter_javascript", .{});
+    exe.addCSourceFile(.{
+        .file = tree_sitter_javascript.path("src/parser.c"),
+        .flags = &.{"-std=c11"},
+    });
+    exe.addCSourceFile(.{
+        .file = tree_sitter_javascript.path("src/scanner.c"),
+        .flags = &.{"-std=c11"},
+    });
+    exe.addIncludePath(tree_sitter_javascript.path("src"));
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     const run_step = b.step("run", "Run the app");

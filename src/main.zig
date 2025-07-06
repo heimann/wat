@@ -4,6 +4,7 @@ const tree_sitter = @import("tree-sitter");
 extern fn tree_sitter_zig() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_go() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_python() callconv(.C) *tree_sitter.Language;
+extern fn tree_sitter_javascript() callconv(.C) *tree_sitter.Language;
 
 fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
     if (std.mem.endsWith(u8, file_path, ".zig")) {
@@ -12,6 +13,8 @@ fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
         return tree_sitter_go();
     } else if (std.mem.endsWith(u8, file_path, ".py")) {
         return tree_sitter_python();
+    } else if (std.mem.endsWith(u8, file_path, ".js") or std.mem.endsWith(u8, file_path, ".mjs")) {
+        return tree_sitter_javascript();
     }
     return null;
 }
@@ -99,7 +102,10 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
         std.mem.eql(u8, node_type, "var_declaration") or
         // Python node types
         std.mem.eql(u8, node_type, "function_definition") or
-        std.mem.eql(u8, node_type, "class_definition")) {
+        std.mem.eql(u8, node_type, "class_definition") or
+        // JavaScript node types (note: function_declaration is already covered)
+        std.mem.eql(u8, node_type, "class_declaration") or
+        std.mem.eql(u8, node_type, "method_definition")) {
         
         // Find the identifier child
         var i: u32 = 0;
@@ -135,6 +141,30 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
                 const line = left.startPoint().row + 1;
                 
                 std.debug.print("{s}\t{d}\tassignment\n", .{ name, line });
+            }
+        }
+    }
+    
+    // Special handling for JavaScript variable declarations
+    if (std.mem.eql(u8, node_type, "lexical_declaration") or
+        std.mem.eql(u8, node_type, "variable_declaration")) {
+        // Find variable_declarator children
+        var j: u32 = 0;
+        while (j < node.childCount()) : (j += 1) {
+            if (node.child(j)) |child| {
+                if (std.mem.eql(u8, child.kind(), "variable_declarator")) {
+                    // Get the identifier (first child of declarator)
+                    if (child.child(0)) |id_node| {
+                        if (std.mem.eql(u8, id_node.kind(), "identifier")) {
+                            const start = id_node.startByte();
+                            const end = id_node.endByte();
+                            const name = source[start..end];
+                            const line = id_node.startPoint().row + 1;
+                            
+                            std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, node_type });
+                        }
+                    }
+                }
             }
         }
     }

@@ -111,5 +111,40 @@ else
     exit 1
 fi
 
+echo "Testing JavaScript support..."
+# Expected output for JavaScript (sorted for comparison)
+EXPECTED_JS=$(cat <<'EOF'
+Point	3	class_declaration
+Status	24	class_declaration
+VERSION	1	lexical_declaration
+add	14	function_declaration
+fetchData	35	function_declaration
+globalConfig	29	lexical_declaration
+main	20	function_declaration
+multiply	18	lexical_declaration
+oldStyle	33	variable_declaration
+response	36	lexical_declaration
+EOF
+)
+
+# Run wat on the JavaScript test fixture and sort output
+ACTUAL_JS=$(./zig-out/bin/wat tests/fixtures/simple.js 2>&1 | sort)
+
+# Sort expected output for comparison
+EXPECTED_JS_SORTED=$(echo "$EXPECTED_JS" | sort)
+
+# Compare JavaScript outputs
+if [ "$ACTUAL_JS" = "$EXPECTED_JS_SORTED" ]; then
+    echo "✓ JavaScript test passed"
+else
+    echo "✗ JavaScript test failed: Output mismatch"
+    echo "Expected:"
+    echo "$EXPECTED_JS_SORTED"
+    echo ""
+    echo "Actual:"
+    echo "$ACTUAL_JS"
+    exit 1
+fi
+
 echo "✓ All tests passed: Symbol extraction works correctly for all languages"
 exit 0

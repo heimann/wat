@@ -138,7 +138,7 @@ wat
 ├── Languages
 │   ├── Go ✓
 │   ├── Elixir
-│   ├── Java
+│   ├── Java ✓
 │   ├── Python ✓
 │   ├── JavaScript ✓
 │   ├── TypeScript ✓

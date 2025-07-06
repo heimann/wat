@@ -267,5 +267,50 @@ else
     exit 1
 fi
 
+echo "Testing Java support..."
+# Expected output for Java (sorted for comparison)
+EXPECTED_JAVA=$(cat <<'EOF'
+Drawable	29	interface_declaration
+ERROR	48	enum_constant
+Main	51	class_declaration
+OK	47	enum_constant
+Point	13	constructor_declaration
+Point	7	class_declaration
+Shape	33	class_declaration
+Shape	36	constructor_declaration
+Status	46	enum_declaration
+VERSION	11	field_declaration
+name	34	field_declaration
+add	58	method_declaration
+counter	52	field_declaration
+distance	22	method_declaration
+draw	30	method_declaration
+draw	41	method_declaration
+getX	18	method_declaration
+main	54	method_declaration
+x	8	field_declaration
+y	9	field_declaration
+EOF
+)
+
+# Run wat on the Java test fixture and sort output
+ACTUAL_JAVA=$(./zig-out/bin/wat tests/fixtures/simple.java 2>&1 | sort)
+
+# Sort expected output for comparison
+EXPECTED_JAVA_SORTED=$(echo "$EXPECTED_JAVA" | sort)
+
+# Compare Java outputs
+if [ "$ACTUAL_JAVA" = "$EXPECTED_JAVA_SORTED" ]; then
+    echo "✓ Java test passed"
+else
+    echo "✗ Java test failed: Output mismatch"
+    echo "Expected:"
+    echo "$EXPECTED_JAVA_SORTED"
+    echo ""
+    echo "Actual:"
+    echo "$ACTUAL_JAVA"
+    exit 1
+fi
+
 echo "✓ All tests passed: Symbol extraction works correctly for all languages"
 exit 0

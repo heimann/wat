@@ -8,6 +8,7 @@ extern fn tree_sitter_javascript() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_typescript() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_rust() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_c() callconv(.C) *tree_sitter.Language;
+extern fn tree_sitter_java() callconv(.C) *tree_sitter.Language;
 
 fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
     if (std.mem.endsWith(u8, file_path, ".zig")) {
@@ -24,6 +25,8 @@ fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
         return tree_sitter_rust();
     } else if (std.mem.endsWith(u8, file_path, ".c") or std.mem.endsWith(u8, file_path, ".h")) {
         return tree_sitter_c();
+    } else if (std.mem.endsWith(u8, file_path, ".java")) {
+        return tree_sitter_java();
     }
     return null;
 }
@@ -37,11 +40,12 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        std.debug.print("Usage: {s} <file>\n", .{args[0]});
+        std.debug.print("Usage: {s} <file> [--debug]\n", .{args[0]});
         return;
     }
 
     const file_path = args[1];
+    const debug_mode = args.len > 2 and std.mem.eql(u8, args[2], "--debug");
     const file_content = try std.fs.cwd().readFileAlloc(allocator, file_path, 1024 * 1024 * 10); // 10MB max
     defer allocator.free(file_content);
 
@@ -64,7 +68,7 @@ pub fn main() !void {
         const root_node = t.rootNode();
         
         // Walk the tree and extract symbols
-        try extractSymbols(root_node, file_content, 0);
+        try extractSymbols(root_node, file_content, 0, debug_mode);
     } else {
         std.debug.print("Failed to parse file\n", .{});
     }
@@ -139,13 +143,13 @@ fn extractIdentifierFromDeclarator(declarator: tree_sitter.Node, source: []const
     }
 }
 
-fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !void {
+fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize, debug_mode: bool) !void {
     const node_type = node.kind();
     
     // Debug: print all node types to understand the grammar
-    // if (node.isNamed() and depth == 1 and std.mem.containsAtLeast(u8, source[node.startByte()..@min(node.endByte(), node.startByte() + 20)], 1, "operation")) {
-    //     std.debug.print("DEBUG operation: {s}\n", .{node_type});
-    // }
+    if (debug_mode and node.isNamed()) {
+        std.debug.print("DEBUG: {s}\n", .{node_type});
+    }
     
     // Check for symbol-like nodes in Zig
     if (std.mem.eql(u8, node_type, "function_declaration") or
@@ -188,7 +192,13 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
         std.mem.eql(u8, node_type, "struct_specifier") or
         std.mem.eql(u8, node_type, "enum_specifier") or
         std.mem.eql(u8, node_type, "union_specifier") or
-        std.mem.eql(u8, node_type, "preproc_def")) {
+        std.mem.eql(u8, node_type, "preproc_def") or
+        // Java node types
+        std.mem.eql(u8, node_type, "class_declaration") or
+        std.mem.eql(u8, node_type, "interface_declaration") or
+        std.mem.eql(u8, node_type, "enum_declaration") or
+        std.mem.eql(u8, node_type, "method_declaration") or
+        std.mem.eql(u8, node_type, "constructor_declaration")) {
         
         // Find the identifier child
         var i: u32 = 0;
@@ -299,11 +309,46 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
         }
     }
     
+    // Special handling for Java enum constants
+    if (std.mem.eql(u8, node_type, "enum_constant")) {
+        if (node.child(0)) |id_node| {
+            if (std.mem.eql(u8, id_node.kind(), "identifier")) {
+                const start = id_node.startByte();
+                const end = id_node.endByte();
+                const name = source[start..end];
+                const line = id_node.startPoint().row + 1;
+                
+                std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, node_type });
+            }
+        }
+    }
+    
+    // Special handling for Java field declarations
+    if (std.mem.eql(u8, node_type, "field_declaration")) {
+        var j: u32 = 0;
+        while (j < node.childCount()) : (j += 1) {
+            if (node.child(j)) |child| {
+                if (std.mem.eql(u8, child.kind(), "variable_declarator")) {
+                    if (child.child(0)) |id_node| {
+                        if (std.mem.eql(u8, id_node.kind(), "identifier")) {
+                            const start = id_node.startByte();
+                            const end = id_node.endByte();
+                            const name = source[start..end];
+                            const line = id_node.startPoint().row + 1;
+                            
+                            std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, node_type });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
     // Recurse through children
     var i: u32 = 0;
     while (i < node.childCount()) : (i += 1) {
         if (node.child(i)) |child| {
-            try extractSymbols(child, source, depth + 1);
+            try extractSymbols(child, source, depth + 1, debug_mode);
         }
     }
 }

@@ -226,5 +226,46 @@ else
     exit 1
 fi
 
+echo "Testing C support..."
+# Expected output for C (sorted for comparison)
+EXPECTED_C=$(cat <<'EOF'
+Calculator	58	struct_specifier
+Data	42	union_specifier
+MAX_SIZE	6	preproc_def
+PROGRAM_NAME	20	declaration
+Point	11	type_definition
+Status	16	type_definition
+VERSION	5	preproc_def
+add	23	declaration
+add	27	function_definition
+distance	35	function_definition
+dx	36	declaration
+dy	37	declaration
+global_counter	19	declaration
+main	49	function_definition
+print_point	24	declaration
+print_point	31	function_definition
+EOF
+)
+
+# Run wat on the C test fixture and sort output
+ACTUAL_C=$(./zig-out/bin/wat tests/fixtures/simple.c 2>&1 | sort)
+
+# Sort expected output for comparison
+EXPECTED_C_SORTED=$(echo "$EXPECTED_C" | sort)
+
+# Compare C outputs
+if [ "$ACTUAL_C" = "$EXPECTED_C_SORTED" ]; then
+    echo "✓ C test passed"
+else
+    echo "✗ C test failed: Output mismatch"
+    echo "Expected:"
+    echo "$EXPECTED_C_SORTED"
+    echo ""
+    echo "Actual:"
+    echo "$ACTUAL_C"
+    exit 1
+fi
+
 echo "✓ All tests passed: Symbol extraction works correctly for all languages"
 exit 0

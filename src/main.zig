@@ -7,6 +7,7 @@ extern fn tree_sitter_python() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_javascript() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_typescript() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_rust() callconv(.C) *tree_sitter.Language;
+extern fn tree_sitter_c() callconv(.C) *tree_sitter.Language;
 
 fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
     if (std.mem.endsWith(u8, file_path, ".zig")) {
@@ -21,6 +22,8 @@ fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
         return tree_sitter_typescript();
     } else if (std.mem.endsWith(u8, file_path, ".rs")) {
         return tree_sitter_rust();
+    } else if (std.mem.endsWith(u8, file_path, ".c") or std.mem.endsWith(u8, file_path, ".h")) {
+        return tree_sitter_c();
     }
     return null;
 }
@@ -86,12 +89,62 @@ fn extractSymbolFromSpec(spec_node: tree_sitter.Node, source: []const u8, parent
     }
 }
 
+const IdentifierInfo = struct {
+    name: []const u8,
+    line: u32,
+};
+
+fn extractIdentifierFromDeclarator(declarator: tree_sitter.Node, source: []const u8) ?IdentifierInfo {
+    var current = declarator;
+    
+    // Traverse through declarators to find the identifier
+    while (true) {
+        const node_type = current.kind();
+        
+        if (std.mem.eql(u8, node_type, "identifier")) {
+            const start = current.startByte();
+            const end = current.endByte();
+            return IdentifierInfo{
+                .name = source[start..end],
+                .line = current.startPoint().row + 1,
+            };
+        }
+        
+        // Navigate through nested declarators
+        if (std.mem.eql(u8, node_type, "function_declarator") or
+            std.mem.eql(u8, node_type, "array_declarator") or
+            std.mem.eql(u8, node_type, "pointer_declarator") or
+            std.mem.eql(u8, node_type, "init_declarator") or
+            std.mem.eql(u8, node_type, "parenthesized_declarator")) {
+            // Look for first child that might contain identifier
+            var i: u32 = 0;
+            while (i < current.childCount()) : (i += 1) {
+                if (current.child(i)) |child| {
+                    const child_type = child.kind();
+                    if (std.mem.eql(u8, child_type, "identifier") or
+                        std.mem.eql(u8, child_type, "function_declarator") or
+                        std.mem.eql(u8, child_type, "array_declarator") or
+                        std.mem.eql(u8, child_type, "pointer_declarator") or
+                        std.mem.eql(u8, child_type, "parenthesized_declarator")) {
+                        current = child;
+                        break;
+                    }
+                }
+            } else {
+                return null;
+            }
+        } else {
+            return null;
+        }
+    }
+}
+
 fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !void {
     const node_type = node.kind();
     
     // Debug: print all node types to understand the grammar
-    // if (node.isNamed()) {
-    //     std.debug.print("DEBUG: {s}\n", .{node_type});
+    // if (node.isNamed() and depth == 1 and std.mem.containsAtLeast(u8, source[node.startByte()..@min(node.endByte(), node.startByte() + 20)], 1, "operation")) {
+    //     std.debug.print("DEBUG operation: {s}\n", .{node_type});
     // }
     
     // Check for symbol-like nodes in Zig
@@ -127,7 +180,15 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
         std.mem.eql(u8, node_type, "static_item") or
         std.mem.eql(u8, node_type, "type_item") or
         std.mem.eql(u8, node_type, "mod_item") or
-        std.mem.eql(u8, node_type, "macro_definition")) {
+        std.mem.eql(u8, node_type, "macro_definition") or
+        // C node types
+        std.mem.eql(u8, node_type, "function_definition") or
+        std.mem.eql(u8, node_type, "declaration") or
+        std.mem.eql(u8, node_type, "type_definition") or
+        std.mem.eql(u8, node_type, "struct_specifier") or
+        std.mem.eql(u8, node_type, "enum_specifier") or
+        std.mem.eql(u8, node_type, "union_specifier") or
+        std.mem.eql(u8, node_type, "preproc_def")) {
         
         // Find the identifier child
         var i: u32 = 0;
@@ -149,6 +210,33 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
                     
                     std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, node_type });
                     break;
+                } else if (std.mem.eql(u8, child_type, "function_declarator") and
+                           std.mem.eql(u8, node_type, "function_definition")) {
+                    // C function definitions have function_declarator child
+                    if (extractIdentifierFromDeclarator(child, source)) |id| {
+                        std.debug.print("{s}\t{d}\t{s}\n", .{ id.name, id.line, node_type });
+                        break;
+                    }
+                } else if (std.mem.eql(u8, child_type, "init_declarator") and
+                           std.mem.eql(u8, node_type, "declaration")) {
+                    // C variable declarations
+                    if (extractIdentifierFromDeclarator(child, source)) |id| {
+                        std.debug.print("{s}\t{d}\t{s}\n", .{ id.name, id.line, node_type });
+                    }
+                } else if (std.mem.eql(u8, child_type, "function_declarator") and
+                           std.mem.eql(u8, node_type, "declaration")) {
+                    // C function declarations (prototypes)
+                    if (extractIdentifierFromDeclarator(child, source)) |id| {
+                        std.debug.print("{s}\t{d}\t{s}\n", .{ id.name, id.line, node_type });
+                    }
+                } else if ((std.mem.eql(u8, child_type, "parenthesized_declarator") or
+                            std.mem.eql(u8, child_type, "pointer_declarator")) and
+                           std.mem.eql(u8, node_type, "type_definition")) {
+                    // C typedef for function pointers
+                    if (extractIdentifierFromDeclarator(child, source)) |id| {
+                        std.debug.print("{s}\t{d}\t{s}\n", .{ id.name, id.line, node_type });
+                        break;
+                    }
                 }
             }
         }

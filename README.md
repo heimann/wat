@@ -65,6 +65,15 @@ zig build
 # Find references to symbols
 ./zig-out/bin/wat refs Database
 ./zig-out/bin/wat refs parseString
+
+# Show references with code context
+./zig-out/bin/wat refs detectLanguage --with-context
+
+# Include definitions in reference results
+./zig-out/bin/wat refs detectLanguage --include-defs
+
+# Both flags combined
+./zig-out/bin/wat refs detectLanguage --with-context --include-defs
 ```
 
 ## Usage (Future)
@@ -85,6 +94,21 @@ wat *.go  # Go files
 wat *.ts  # TypeScript files
 ```
 
+## Current Status
+
+**What's Working:**
+- Symbol extraction from 10 languages (Zig, Go, Python, JavaScript, TypeScript, Rust, C, Java, Elixir, HTML)
+- Persistent SQLite database for fast symbol lookups
+- Incremental indexing based on file modification times
+- Reference tracking with code context
+- Rich output formatting with `--with-context` flag
+
+**Recent Additions:**
+- Enhanced `wat refs` command with context display and definition tracking
+- Symbol definitions stored as special references
+- Caret indicators showing exact symbol location in code
+- Ability to include/exclude definitions in reference results
+
 ## Roadmap
 
 ### Phase 1: Core Infrastructure ✅
@@ -92,14 +116,13 @@ wat *.ts  # TypeScript files
 - [x] Symbol extraction for Zig
 - [x] Command-line interface
 
-### Phase 2: Multi-Language Support (In Progress)
-- [x] Bundle tree-sitter grammars for: Go, Python, JavaScript, TypeScript, Rust, C, Java, Elixir
-- [ ] Bundle tree-sitter grammars for: HTML
+### Phase 2: Multi-Language Support ✅
+- [x] Bundle tree-sitter grammars for: Go, Python, JavaScript, TypeScript, Rust, C, Java, Elixir, HTML
 - [x] Language auto-detection based on file extensions  
 - [x] Language-specific symbol extraction rules
 - [x] Unified symbol output format across languages
 
-**Current Status:**
+**Language Support:**
 - ✅ Zig (built-in) - functions, types, variables, tests
 - ✅ Go (v0.23.4) - functions, types, constants, variables
 - ✅ Python (v0.23.6) - functions, classes, assignments (includes scanner.c)
@@ -117,6 +140,7 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 - [x] SQLite-based symbol database
   - Files table: track path, last_modified, language
   - Symbols table: name, line, node_type with file reference
+  - Refs table: track all symbol references with context
   - Indexed by symbol name for fast lookups
 - [x] Index entire repositories with `wat index <path>`
 - [x] Incremental updates for changed files
@@ -125,12 +149,16 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 **Current Implementation:**
 - Database is stored as `wat.db` in the current working directory
 - Commands must be run from the same directory to access the same database
+- References are extracted with full line context for rich display
+- Symbol definitions are also stored as special references
 - TODO: Make database location configurable (e.g., `--db` flag, project root detection, or ~/.wat/)
 
-### Phase 4: Smart Context Extraction (NEXT UP 👈)
+### Phase 4: Smart Context Extraction (IN PROGRESS 🚧)
 - [x] `wat find <symbol>` - Find symbol definition
 - [x] `wat refs <symbol>` - Find all references
-- [ ] `wat context <symbol>` - Get symbol with smart context
+  - `--with-context` - Show line of code with caret indicators
+  - `--include-defs` - Include definitions marked with [DEF]
+- [ ] `wat context <symbol>` - Get symbol with smart context (full function/type definition)
 - [ ] `wat deps <symbol>` - Show symbol dependencies
 
 ### Phase 5: Extended Language Support

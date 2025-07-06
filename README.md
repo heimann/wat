@@ -95,7 +95,10 @@ Binary size: 6.1MB (grows ~0.5-0.6MB per language)
 
 ### Phase 3: Persistent Index
 - [ ] SQLite-based symbol database
-- [ ] Index entire repositories
+  - Files table: track path, last_modified, language
+  - Symbols table: name, line, node_type with file reference
+  - Indexed by symbol name for fast lookups
+- [ ] Index entire repositories with `wat index <path>`
 - [ ] Incremental updates for changed files
 - [ ] Fast symbol queries
 
@@ -110,12 +113,15 @@ Binary size: 6.1MB (grows ~0.5-0.6MB per language)
 - [ ] Support for configuration files (YAML, TOML, JSON)
 - [ ] Support for markup languages (Markdown, AsciiDoc)
 - [ ] Custom language definitions via config files
+- [ ] Consider plugin architecture after 10+ languages for maintainability
 
 ### Phase 6: LLM-Optimized Features
 - [ ] Context window management
-- [ ] Token-efficient output formats
+- [ ] Token-efficient output formats (JSON, compact formats)
+- [ ] Token count estimation for extracted context
 - [ ] Semantic context expansion
-- [ ] API for tool integration
+- [ ] API for tool integration (REST/gRPC)
+- [ ] LSP bridge for IDE integration (optional)
 
 ## Architecture
 
@@ -183,8 +189,10 @@ zig build
 This project is in early development. Key areas for contribution:
 - Adding support for more languages
 - Improving symbol extraction accuracy
-- Performance optimizations
+- Performance optimizations (parallel processing, streaming)
 - Query interface design
+- Testing on real-world codebases
+- Error handling improvements
 
 ### Adding a New Language
 
@@ -342,9 +350,18 @@ ls -lh ./zig-out/bin/wat  # Should be ~6.1MB
 
 ### Next Steps
 1. **TypeScript** is next - follow the guide above to add it
-2. Remember to check for scanner.c files (Python and JS have them)
-3. Each language adds ~0.5-0.6MB to binary size
-4. Keep the "extract everything" philosophy - include private methods, local variables, etc.
+   - Will need scanner.c like JavaScript
+   - Support .ts and .tsx extensions
+   - Include interfaces, type aliases, enums
+2. **Rust** after TypeScript
+   - Complex grammar with impl blocks, traits
+   - May need scanner.c
+3. **C** for foundational support
+   - Simpler grammar
+   - Support .c and .h files
+4. Remember to check for scanner.c files (Python and JS have them)
+5. Each language adds ~0.5-0.6MB to binary size
+6. Keep the "extract everything" philosophy - include private methods, local variables, etc.
 
 ### Key Files to Know
 - `src/main.zig` - Language detection and symbol extraction logic

@@ -146,5 +146,44 @@ else
     exit 1
 fi
 
+echo "Testing TypeScript support..."
+# Expected output for TypeScript (sorted for comparison)
+EXPECTED_TS=$(cat <<'EOF'
+Color	11	enum_declaration
+ComplexType	41	type_alias_declaration
+DefaultExport	50	class_declaration
+Point	4	interface_declaration
+Shape	17	class_declaration
+Status	9	type_alias_declaration
+Utils	35	internal_module
+VERSION	2	lexical_declaration
+VERSION	51	public_field_definition
+add	25	function_declaration
+format	36	function_declaration
+globalConfig	46	lexical_declaration
+main	31	function_declaration
+multiply	29	lexical_declaration
+EOF
+)
+
+# Run wat on the TypeScript test fixture and sort output
+ACTUAL_TS=$(./zig-out/bin/wat tests/fixtures/simple.ts 2>&1 | sort)
+
+# Sort expected output for comparison
+EXPECTED_TS_SORTED=$(echo "$EXPECTED_TS" | sort)
+
+# Compare TypeScript outputs
+if [ "$ACTUAL_TS" = "$EXPECTED_TS_SORTED" ]; then
+    echo "✓ TypeScript test passed"
+else
+    echo "✗ TypeScript test failed: Output mismatch"
+    echo "Expected:"
+    echo "$EXPECTED_TS_SORTED"
+    echo ""
+    echo "Actual:"
+    echo "$ACTUAL_TS"
+    exit 1
+fi
+
 echo "✓ All tests passed: Symbol extraction works correctly for all languages"
 exit 0

@@ -5,6 +5,7 @@ extern fn tree_sitter_zig() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_go() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_python() callconv(.C) *tree_sitter.Language;
 extern fn tree_sitter_javascript() callconv(.C) *tree_sitter.Language;
+extern fn tree_sitter_typescript() callconv(.C) *tree_sitter.Language;
 
 fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
     if (std.mem.endsWith(u8, file_path, ".zig")) {
@@ -15,6 +16,8 @@ fn detectLanguage(file_path: []const u8) ?*tree_sitter.Language {
         return tree_sitter_python();
     } else if (std.mem.endsWith(u8, file_path, ".js") or std.mem.endsWith(u8, file_path, ".mjs")) {
         return tree_sitter_javascript();
+    } else if (std.mem.endsWith(u8, file_path, ".ts") or std.mem.endsWith(u8, file_path, ".tsx")) {
+        return tree_sitter_typescript();
     }
     return null;
 }
@@ -105,7 +108,12 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
         std.mem.eql(u8, node_type, "class_definition") or
         // JavaScript node types (note: function_declaration is already covered)
         std.mem.eql(u8, node_type, "class_declaration") or
-        std.mem.eql(u8, node_type, "method_definition")) {
+        std.mem.eql(u8, node_type, "method_definition") or
+        // TypeScript node types
+        std.mem.eql(u8, node_type, "interface_declaration") or
+        std.mem.eql(u8, node_type, "type_alias_declaration") or
+        std.mem.eql(u8, node_type, "enum_declaration") or
+        std.mem.eql(u8, node_type, "internal_module")) {
         
         // Find the identifier child
         var i: u32 = 0;
@@ -118,7 +126,8 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
                     std.mem.eql(u8, child_type, "var_spec")) {
                     // Extract from spec nodes
                     try extractSymbolFromSpec(child, source, node_type);
-                } else if (std.mem.eql(u8, child_type, "identifier")) {
+                } else if (std.mem.eql(u8, child_type, "identifier") or
+                           std.mem.eql(u8, child_type, "type_identifier")) {
                     const start = child.startByte();
                     const end = child.endByte();
                     const name = source[start..end];
@@ -145,7 +154,7 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
         }
     }
     
-    // Special handling for JavaScript variable declarations
+    // Special handling for JavaScript/TypeScript variable declarations
     if (std.mem.eql(u8, node_type, "lexical_declaration") or
         std.mem.eql(u8, node_type, "variable_declaration")) {
         // Find variable_declarator children
@@ -164,6 +173,25 @@ fn extractSymbols(node: tree_sitter.Node, source: []const u8, depth: usize) !voi
                             std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, node_type });
                         }
                     }
+                }
+            }
+        }
+    }
+    
+    // Special handling for TypeScript public field definitions
+    if (std.mem.eql(u8, node_type, "public_field_definition")) {
+        // Find the property_identifier
+        var k: u32 = 0;
+        while (k < node.childCount()) : (k += 1) {
+            if (node.child(k)) |child| {
+                if (std.mem.eql(u8, child.kind(), "property_identifier")) {
+                    const start = child.startByte();
+                    const end = child.endByte();
+                    const name = source[start..end];
+                    const line = child.startPoint().row + 1;
+                    
+                    std.debug.print("{s}\t{d}\t{s}\n", .{ name, line, node_type });
+                    break;
                 }
             }
         }

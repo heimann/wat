@@ -45,6 +45,7 @@ zig build
 ./zig-out/bin/wat myfile.go   # Go
 ./zig-out/bin/wat myfile.py   # Python
 ./zig-out/bin/wat myfile.js   # JavaScript
+./zig-out/bin/wat myfile.ts   # TypeScript
 ```
 
 ## Usage (Future)
@@ -73,8 +74,8 @@ wat *.ts  # TypeScript files
 - [x] Command-line interface
 
 ### Phase 2: Multi-Language Support (In Progress)
-- [x] Bundle tree-sitter grammars for: Go, Python, JavaScript
-- [ ] Bundle tree-sitter grammars for: TypeScript, Rust, C, Java, Elixir, HTML
+- [x] Bundle tree-sitter grammars for: Go, Python, JavaScript, TypeScript
+- [ ] Bundle tree-sitter grammars for: Rust, C, Java, Elixir, HTML
 - [x] Language auto-detection based on file extensions  
 - [x] Language-specific symbol extraction rules
 - [x] Unified symbol output format across languages
@@ -84,14 +85,14 @@ wat *.ts  # TypeScript files
 - ✅ Go (v0.23.4) - functions, types, constants, variables
 - ✅ Python (v0.23.6) - functions, classes, assignments (includes scanner.c)
 - ✅ JavaScript (v0.23.1) - functions, classes, methods, const/let/var (includes scanner.c)
-- 📋 TypeScript - Next to implement
-- 📋 Rust - Planned
+- ✅ TypeScript (v0.23.2) - interfaces, type aliases, enums, namespaces, all JS features (includes scanner.c)
+- 📋 Rust - Next to implement
 - 📋 C - Planned
 - 📋 Java - Planned
 - 📋 Elixir - Planned
 - 📋 HTML - Planned
 
-Binary size: 6.1MB (grows ~0.5-0.6MB per language)
+Binary size: ~7.7MB (grows ~0.5-1.0MB per language)
 
 ### Phase 3: Persistent Index
 - [ ] SQLite-based symbol database
@@ -132,14 +133,14 @@ wat
 │   ├── Tree-sitter Interface
 │   └── CLI Framework
 ├── Languages
-│   ├── Go
+│   ├── Go ✓
 │   ├── Elixir
 │   ├── Java
-│   ├── Python
-│   ├── JavaScript
-│   ├── TypeScript
+│   ├── Python ✓
+│   ├── JavaScript ✓
+│   ├── TypeScript ✓
 │   ├── Rust
-│   ├── Zig
+│   ├── Zig ✓
 │   ├── HTML
 │   └── C
 ├── Indexer
@@ -340,20 +341,21 @@ If you're picking up development in a new Claude Code instance:
 ./zig-out/bin/wat tests/fixtures/simple.go   # Should work
 ./zig-out/bin/wat tests/fixtures/simple.py   # Should work
 ./zig-out/bin/wat tests/fixtures/simple.js   # Should work
+./zig-out/bin/wat tests/fixtures/simple.ts   # Should work
 
 # Run tests
-make test  # Should show all 4 languages passing
+make test  # Should show all 5 languages passing
 
 # Check binary size
-ls -lh ./zig-out/bin/wat  # Should be ~6.1MB
+ls -lh ./zig-out/bin/wat  # Should be ~7.7MB with 5 languages
 ```
 
 ### Next Steps
-1. **TypeScript** is next - follow the guide above to add it
-   - Will need scanner.c like JavaScript
-   - Support .ts and .tsx extensions
-   - Include interfaces, type aliases, enums
-2. **Rust** after TypeScript
+1. ~~**TypeScript** is next~~ ✅ Complete!
+   - Added scanner.c support
+   - Supports .ts and .tsx extensions
+   - Includes interfaces, type aliases, enums, namespaces
+2. **Rust** is next
    - Complex grammar with impl blocks, traits
    - May need scanner.c
 3. **C** for foundational support

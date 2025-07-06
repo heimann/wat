@@ -7,10 +7,10 @@ A lightweight, plugin-based code analysis tool that uses tree-sitter to build fa
 While LSPs are excellent for human developers working in IDEs, LLMs and automation tools need something different:
 - **Fast, deterministic symbol lookup** - No server startup overhead
 - **Surgical context extraction** - Get exactly the code context needed
-- **Plugin-based language support** - Install only the languages you need
+- **Bundled language support** - Works with 10+ languages out of the box
 - **Scriptable** - Easy to integrate into any workflow
 
-The plugin architecture keeps the core tool lightweight while allowing users to add support for exactly the languages they need, similar to how package managers or editor plugins work.
+By bundling common languages directly, `wat` provides instant support for most codebases without any configuration or setup required.
 
 ## Current Features
 
@@ -31,14 +31,6 @@ zig build
 ## Usage (Future)
 
 ```bash
-# Install wat
-wat install
-
-# Add language support
-wat plugin add zig
-wat plugin add rust
-wat plugin add typescript
-
 # Index a project
 wat index .
 
@@ -46,6 +38,12 @@ wat index .
 wat find MyFunction
 wat refs MyStruct
 wat context parseConfig --lines=10
+wat deps parseConfig
+
+# Language auto-detection
+wat *.rs  # Rust files
+wat *.go  # Go files
+wat *.ts  # TypeScript files
 ```
 
 ## Roadmap
@@ -55,12 +53,11 @@ wat context parseConfig --lines=10
 - [x] Symbol extraction for Zig
 - [x] Command-line interface
 
-### Phase 2: Plugin System
-- [ ] Plugin architecture design
-- [ ] Plugin manifest format
-- [ ] Dynamic loading of tree-sitter grammars
-- [ ] Plugin installation/removal commands
-- [ ] Plugin repository/registry
+### Phase 2: Multi-Language Support
+- [ ] Bundle tree-sitter grammars for: Go, Elixir, Java, Python, JavaScript, TypeScript, Rust, Zig, HTML, C
+- [ ] Language auto-detection based on file extensions
+- [ ] Language-specific symbol extraction rules
+- [ ] Unified symbol output format across languages
 
 ### Phase 3: Persistent Index
 - [ ] SQLite-based symbol database
@@ -74,11 +71,11 @@ wat context parseConfig --lines=10
 - [ ] `wat context <symbol>` - Get symbol with smart context
 - [ ] `wat deps <symbol>` - Show symbol dependencies
 
-### Phase 5: Language Plugins
-- [ ] Create plugin template/SDK
-- [ ] Core language plugins: Go, Rust, TypeScript, Python
-- [ ] Language-specific symbol extraction rules
-- [ ] Community plugin repository
+### Phase 5: Extended Language Support
+- [ ] Add more languages based on user demand
+- [ ] Support for configuration files (YAML, TOML, JSON)
+- [ ] Support for markup languages (Markdown, AsciiDoc)
+- [ ] Custom language definitions via config files
 
 ### Phase 6: LLM-Optimized Features
 - [ ] Context window management
@@ -91,35 +88,36 @@ wat context parseConfig --lines=10
 ```
 wat
 ├── Core
-│   ├── Plugin Manager
+│   ├── Language Manager (bundled grammars)
 │   ├── Tree-sitter Interface
 │   └── CLI Framework
+├── Languages
+│   ├── Go
+│   ├── Elixir
+│   ├── Java
+│   ├── Python
+│   ├── JavaScript
+│   ├── TypeScript
+│   ├── Rust
+│   ├── Zig
+│   ├── HTML
+│   └── C
 ├── Indexer
 │   ├── Symbol extraction
 │   └── Database storage
-├── Query Engine
-│   ├── Symbol lookup
-│   ├── Reference finding
-│   └── Context building
-└── Plugins (~/.wat/plugins/)
-    ├── zig/
-    │   ├── grammar.so
-    │   ├── queries.scm
-    │   └── manifest.json
-    └── rust/
-        ├── grammar.so
-        ├── queries.scm
-        └── manifest.json
+└── Query Engine
+    ├── Symbol lookup
+    ├── Reference finding
+    └── Context building
 ```
 
-### Plugin Structure
+### Bundled Languages
 
-Each language plugin provides:
-- **grammar.so** - Compiled tree-sitter grammar
-- **queries.scm** - Tree-sitter queries for symbol extraction
-- **manifest.json** - Plugin metadata (version, dependencies, etc.)
-
-Plugins are installed to `~/.wat/plugins/` and loaded dynamically at runtime.
+All language support is compiled directly into the binary:
+- **Zero configuration** - Works out of the box
+- **Fast startup** - No dynamic loading overhead
+- **Reliable** - No missing dependencies
+- **Small footprint** - ~30MB binary with 10 languages
 
 ## Why Not Just Use LSP?
 

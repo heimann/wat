@@ -627,4 +627,4 @@ ls -lh ./zig-out/bin/wat  # Should be ~14MB with 10 languages
 
 ## License
 
-TODO: Add license
+MIT License - see [LICENSE](LICENSE) file for details.

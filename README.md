@@ -2,9 +2,12 @@
 
 A lightweight, plugin-based code analysis tool that uses tree-sitter to build fast, accurate symbol indexes for codebases. Designed to provide LLMs and command-line users with precise code context without the overhead of full language servers.
 
+You can think of wat like a modern ctags replacement, built on top of tree-sitter.
+
 ## Vision
 
 While LSPs are excellent for human developers working in IDEs, LLMs and automation tools need something different:
+
 - **Fast, deterministic symbol lookup** - No server startup overhead
 - **Surgical context extraction** - Get exactly the code context needed
 - **Bundled language support** - Works with 10+ languages out of the box
@@ -12,110 +15,114 @@ While LSPs are excellent for human developers working in IDEs, LLMs and automati
 
 By bundling common languages directly, `wat` provides instant support for most codebases without any configuration or setup required.
 
+`wat` is also very useful for building developer tooling, where you might not want to be running a full LSP.
+
 ## Current Features
 
 - Extract symbols (functions, types, variables) from multiple languages
-- Simple ctags-like output format  
+- Simple ctags-like output format
 - Tree-sitter based parsing for accurate results
 - Language auto-detection based on file extensions
 
 ### Symbol Extraction Philosophy
 
 `wat` extracts **all** symbols it finds, including:
+
 - Private/internal symbols (e.g., Python's `__init__` methods)
 - Class constants (shown as assignments in Python)
 - Helper functions marked as private
 
-This "extract everything" approach is intentional:
+This "extract everything" approach is, for now, intentional:
+
 - Matches traditional ctags behavior
 - LLMs benefit from seeing implementation details
 - Enables comprehensive codebase analysis
 - Filtering can be added later if needed
 
-The tool aims to be a faithful reporter of what's in the code, not a judge of what's "useful".
+The tool, by default, aims to be a faithful reporter of what's in the code, not a judge of what's "useful".
 
 ## Usage (Current)
 
 ```bash
 # Build the project
-zig build
+make install
 
 # Extract symbols from a single file (prints to stdout)
-./zig-out/bin/wat myfile.zig  # Zig
-./zig-out/bin/wat myfile.go   # Go
-./zig-out/bin/wat myfile.py   # Python
-./zig-out/bin/wat myfile.js   # JavaScript
-./zig-out/bin/wat myfile.ts   # TypeScript
-./zig-out/bin/wat myfile.rs   # Rust
-./zig-out/bin/wat myfile.c    # C
-./zig-out/bin/wat myfile.h    # C headers
-./zig-out/bin/wat myfile.java # Java
-./zig-out/bin/wat myfile.ex   # Elixir
-./zig-out/bin/wat myfile.exs  # Elixir scripts
-./zig-out/bin/wat myfile.html # HTML (extracts id attributes)
+wat myfile.zig  # Zig
+wat myfile.go   # Go
+wat myfile.py   # Python
+wat myfile.js   # JavaScript
+wat myfile.ts   # TypeScript
+wat myfile.rs   # Rust
+wat myfile.c    # C
+wat myfile.h    # C headers
+wat myfile.java # Java
+wat myfile.ex   # Elixir
+wat myfile.exs  # Elixir scripts
+wat myfile.html # HTML (extracts id attributes)
 
 # Index a directory (creates wat.db in current directory)
-./zig-out/bin/wat index         # Indexes current directory (respects .gitignore)
-./zig-out/bin/wat index src/    # Index specific directory
-./zig-out/bin/wat index .
+wat index         # Indexes current directory (respects .gitignore)
+wat index src/    # Index specific directory
+wat index .
 
 # Find symbols in the indexed database
-./zig-out/bin/wat find main
-./zig-out/bin/wat find parseConfig
+wat find main
+wat find parseConfig
 
 # Enhanced find with additional information
-./zig-out/bin/wat find Database --with-context       # Show line of code
-./zig-out/bin/wat find Database --with-refs          # Show reference count
-./zig-out/bin/wat find Database --with-deps          # Show dependency count
-./zig-out/bin/wat find Database --full-context       # Show full definition with docs
+wat find Database --with-context       # Show line of code
+wat find Database --with-refs          # Show reference count
+wat find Database --with-deps          # Show dependency count
+wat find Database --full-context       # Show full definition with docs
 
 # Fuzzy matching (automatic when no exact match found)
-./zig-out/bin/wat find Data                          # Auto-fuzzy: finds Database, DatabaseError, etc.
-./zig-out/bin/wat find init --fuzzy                  # Force fuzzy: finds init, initialize, initConfig
-./zig-out/bin/wat find base --fuzzy                  # Force fuzzy: finds Database, database, base_url
+wat find Data                          # Auto-fuzzy: finds Database, DatabaseError, etc.
+wat find init --fuzzy                  # Force fuzzy: finds init, initialize, initConfig
+wat find base --fuzzy                  # Force fuzzy: finds Database, database, base_url
 
 # Strict mode (disable automatic fuzzy fallback)
-./zig-out/bin/wat find Data --strict                 # No match: returns error if not found exactly
+wat find Data --strict                 # No match: returns error if not found exactly
 
 # Control match info column for consistent output
-./zig-out/bin/wat find Database --match-info always  # Always show [exact:100] column
-./zig-out/bin/wat find Data --match-info never       # Never show match type column
-./zig-out/bin/wat find Data --match-info smart       # Default: show only for fuzzy matches
+wat find Database --match-info always  # Always show [exact:100] column
+wat find Data --match-info never       # Never show match type column
+wat find Data --match-info smart       # Default: show only for fuzzy matches
 
 # Interactive fuzzy finder with real-time search
-./zig-out/bin/wat find --interactive                # Opens TUI with fuzzy search
-./zig-out/bin/wat find --interactive --action "code -g {file}:{line}"  # Custom editor
-./zig-out/bin/wat find --interactive --action "grep -n {name} {file}"  # Custom action
+wat find --interactive                # Opens TUI with fuzzy search
+wat find --interactive --action "code -g {file}:{line}"  # Custom editor
+wat find --interactive --action "grep -n {name} {file}"  # Custom action
 
 # Combine multiple flags
-./zig-out/bin/wat find main --with-context --with-refs --with-deps
-./zig-out/bin/wat find extract --fuzzy --with-context
+wat find main --with-context --with-refs --with-deps
+wat find extract --fuzzy --with-context
 
 # Find references to symbols
-./zig-out/bin/wat refs Database
-./zig-out/bin/wat refs parseString
+wat refs Database
+wat refs parseString
 
 # Show references with code context
-./zig-out/bin/wat refs detectLanguage --with-context
+wat refs detectLanguage --with-context
 
 # Include definitions in reference results
-./zig-out/bin/wat refs detectLanguage --include-defs
+wat refs detectLanguage --include-defs
 
 # Both flags combined
-./zig-out/bin/wat refs detectLanguage --with-context --include-defs
+wat refs detectLanguage --with-context --include-defs
 
 # Get full context of symbol definitions with documentation
-./zig-out/bin/wat context Database
-./zig-out/bin/wat context myFunction
+wat context Database
+wat context myFunction
 
 # Show what a symbol depends on
-./zig-out/bin/wat deps processFile
-./zig-out/bin/wat deps Database
+wat deps processFile
+wat deps Database
 
 # Show call tree structure of the application
-./zig-out/bin/wat map
-./zig-out/bin/wat map --entry processFile --depth 3
-./zig-out/bin/wat map --entry main --depth 5
+wat map
+wat map --entry processFile --depth 3
+wat map --entry main --depth 5
 ```
 
 ## Advanced Features
@@ -126,29 +133,31 @@ The `wat find --interactive` command provides a terminal UI for real-time symbol
 
 ```bash
 # Launch interactive finder with default editor
-./zig-out/bin/wat find --interactive
+wat find --interactive
 
 # Use Visual Studio Code
-./zig-out/bin/wat find --interactive --action "code -g {file}:{line}"
+wat find --interactive --action "code -g {file}:{line}"
 
 # Use custom command with placeholders
-./zig-out/bin/wat find --interactive --action "echo Found {name} at {file}:{line}"
+wat find --interactive --action "echo Found {name} at {file}:{line}"
 ```
 
 Features:
+
 - Real-time fuzzy search as you type
 - Arrow keys for navigation (↑/↓)
 - Enter to select and execute action
 - ESC or Ctrl-C to cancel
 - Color-coded match types:
   - Green [exact:100] - Exact matches
-  - Yellow [prefix:80] - Prefix matches  
+  - Yellow [prefix:80] - Prefix matches
   - Cyan [suffix:60] - Suffix matches
   - Gray [contains:40] - Contains matches
 - Viewport scrolling for large result sets
 - Shows match count and navigation help
 
 The action template supports placeholders:
+
 - `{file}` - Full path to the file
 - `{line}` - Line number of the symbol
 - `{name}` - Symbol name
@@ -159,19 +168,20 @@ The `wat map` command shows the call hierarchy of your application:
 
 ```bash
 # Show full call tree starting from main()
-./zig-out/bin/wat map
+wat map
 
 # Start from a specific function
-./zig-out/bin/wat map --entry processFile
+wat map --entry processFile
 
 # Limit depth to avoid deep recursion
-./zig-out/bin/wat map --depth 3
+wat map --depth 3
 
 # Combine options
-./zig-out/bin/wat map --entry handleRequest --depth 5
+wat map --entry handleRequest --depth 5
 ```
 
 Example output:
+
 ```
 Call Map:
 ============================================================
@@ -189,6 +199,7 @@ main()
 ## Current Status
 
 **What's Working:**
+
 - Symbol extraction from 10 languages (Zig, Go, Python, JavaScript, TypeScript, Rust, C, Java, Elixir, HTML)
 - Persistent SQLite database for fast symbol lookups
 - Incremental indexing based on file modification times
@@ -199,6 +210,7 @@ main()
 - Fuzzy matching with `--fuzzy` flag for finding symbols with partial names
 
 **Recent Additions:**
+
 - Enhanced `wat refs` command with context display and definition tracking
 - Symbol definitions stored as special references
 - Caret indicators showing exact symbol location in code
@@ -212,17 +224,20 @@ main()
 ## Roadmap
 
 ### Phase 1: Core Infrastructure ✅
+
 - [x] Basic tree-sitter integration
 - [x] Symbol extraction for Zig
 - [x] Command-line interface
 
 ### Phase 2: Multi-Language Support ✅
+
 - [x] Bundle tree-sitter grammars for: Go, Python, JavaScript, TypeScript, Rust, C, Java, Elixir, HTML
-- [x] Language auto-detection based on file extensions  
+- [x] Language auto-detection based on file extensions
 - [x] Language-specific symbol extraction rules
 - [x] Unified symbol output format across languages
 
 **Language Support:**
+
 - ✅ Zig (built-in) - functions, types, variables, tests
 - ✅ Go (v0.23.4) - functions, types, constants, variables
 - ✅ Python (v0.23.6) - functions, classes, assignments (includes scanner.c)
@@ -237,6 +252,7 @@ main()
 Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 
 ### Phase 3: Persistent Index ✅
+
 - [x] SQLite-based symbol database
   - Files table: track path, last_modified, language
   - Symbols table: name, line, node_type with file reference
@@ -249,14 +265,16 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 - [x] Default to current directory when no path specified
 
 **Current Implementation:**
+
 - Database is stored as `wat.db` in the current working directory
 - Commands must be run from the same directory to access the same database
 - References are extracted with full line context for rich display
 - Symbol definitions are also stored as special references
-- Automatically ignores common directories: deps, _build, node_modules, target, etc.
+- Automatically ignores common directories: deps, \_build, node_modules, target, etc.
 - TODO: Make database location configurable (e.g., `--db` flag, project root detection, or ~/.wat/)
 
 ### Phase 4: Smart Context Extraction ✅
+
 - [x] `wat find <symbol>` - Find symbol definition with automatic fuzzy matching
   - `--with-context` - Show line of code containing symbol
   - `--with-refs` - Show count of references
@@ -277,6 +295,7 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
   - `--depth` - Limit tree depth (default: 10)
 
 ### Phase 5: Extended Language Support
+
 - [ ] Add more languages based on user demand
 - [ ] Support for configuration files (YAML, TOML, JSON)
 - [ ] Support for markup languages (Markdown, AsciiDoc)
@@ -284,6 +303,7 @@ Binary size: ~14MB with 10 languages (grows ~0.5-1.3MB per language)
 - [ ] Consider plugin architecture after 10+ languages for maintainability
 
 ### Phase 6: LLM-Optimized Features
+
 - [ ] Context window management
 - [ ] Token-efficient output formats (JSON, compact formats)
 - [ ] Token count estimation for extracted context
@@ -301,14 +321,14 @@ wat
 │   └── CLI Framework
 ├── Languages
 │   ├── Go ✓
-│   ├── Elixir
+│   ├── Elixir ✓
 │   ├── Java ✓
 │   ├── Python ✓
 │   ├── JavaScript ✓
 │   ├── TypeScript ✓
 │   ├── Rust ✓
 │   ├── Zig ✓
-│   ├── HTML
+│   ├── HTML ✓
 │   └── C ✓
 ├── Indexer
 │   ├── Symbol extraction
@@ -322,6 +342,7 @@ wat
 ### Bundled Languages
 
 All language support is compiled directly into the binary:
+
 - **Zero configuration** - Works out of the box
 - **Fast startup** - No dynamic loading overhead
 - **Reliable** - No missing dependencies
@@ -330,12 +351,14 @@ All language support is compiled directly into the binary:
 ## Why Not Just Use LSP?
 
 LSPs are designed for real-time, interactive development:
+
 - Heavyweight server processes
 - Complex protocol overhead
 - Focused on IDE features (hover, complete, etc.)
 - Often require project configuration
 
 `wat` is designed for batch analysis and context extraction:
+
 - Simple CLI tool
 - Fast one-shot operations
 - Focused on code structure understanding
@@ -344,6 +367,7 @@ LSPs are designed for real-time, interactive development:
 ## Building
 
 Requirements:
+
 - Zig 0.14.1 or later
 - Internet connection for initial dependency fetch
 
@@ -388,6 +412,7 @@ make uninstall      # Remove installed binary
 ```
 
 After installation, make sure `~/.local/bin` is in your PATH:
+
 ```bash
 export PATH="$PATH:$HOME/.local/bin"  # Add to ~/.bashrc or ~/.zshrc
 ```
@@ -395,6 +420,7 @@ export PATH="$PATH:$HOME/.local/bin"  # Add to ~/.bashrc or ~/.zshrc
 ## Contributing
 
 This project is in early development. Key areas for contribution:
+
 - Adding support for more languages
 - Improving symbol extraction accuracy
 - Performance optimizations (parallel processing, streaming)
@@ -489,6 +515,7 @@ std.mem.eql(u8, node_type, "class_declaration") or
 ```
 
 Some languages have special requirements:
+
 - **Go**: Uses spec nodes (`type_spec`, `const_spec`, `var_spec`)
 - **Python**: Uses `assignment` nodes for global variables
 - Check the grammar's structure and adapt accordingly
@@ -524,6 +551,7 @@ fi
 #### 10. Update Documentation
 
 Update the README.md:
+
 - Add the language to the "Current Features" usage examples
 - Update the Phase 2 progress with a checkmark
 - Add the language to the "Current Status" list with version info
@@ -532,6 +560,7 @@ Update the README.md:
 #### 11. Test and Commit
 
 Run `make test` to ensure everything works, then commit with a descriptive message that includes:
+
 - Language version added
 - Whether it needs scanner.c
 - What symbol types are supported
@@ -542,6 +571,7 @@ Run `make test` to ensure everything works, then commit with a descriptive messa
 If you're picking up development in a new Claude Code instance:
 
 ### Quick Status Check
+
 ```bash
 # See what languages are supported
 ./zig-out/bin/wat tests/fixtures/simple.zig  # Should work
@@ -563,6 +593,7 @@ ls -lh ./zig-out/bin/wat  # Should be ~14MB with 10 languages
 ```
 
 ### Next Steps
+
 1. ~~**TypeScript** is next~~ ✅ Complete!
    - Added scanner.c support
    - Supports .ts and .tsx extensions
@@ -580,13 +611,15 @@ ls -lh ./zig-out/bin/wat  # Should be ~14MB with 10 languages
 6. Keep the "extract everything" philosophy - include private methods, local variables, etc.
 
 ### Key Files to Know
+
 - `src/main.zig` - Language detection and symbol extraction logic
-- `build.zig` - Grammar compilation configuration  
+- `build.zig` - Grammar compilation configuration
 - `build.zig.zon` - Grammar dependencies
 - `tests/test_smoke.sh` - Test script that verifies all languages work
 - `tests/fixtures/simple.*` - Test files for each language
 
 ### Design Decisions Made
+
 - Extract ALL symbols (including `__init__`, local variables, etc.)
 - Use simple tab-separated output format
 - Bundle all grammars into single binary (no plugins)

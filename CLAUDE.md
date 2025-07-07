@@ -4,52 +4,93 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`wat` is a tree-sitter based code analysis tool designed for LLMs and command-line users to extract precise code context without LSP overhead. Currently supports Zig symbol extraction with a planned plugin architecture for multiple languages.
+`wat` is a tree-sitter based code analysis tool designed for LLMs and command-line users to extract precise code context without LSP overhead. It's like a modern ctags replacement with advanced features for symbol extraction, reference tracking, and dependency analysis.
 
 ## Build Commands
 
 ```bash
-# First time - fetch dependencies
+# First time setup - fetch dependencies
 zig build --fetch
 
 # Build the project
 zig build
 
+# Build release version (optimized)
+zig build -Doptimize=ReleaseSafe
+
+# Install to ~/.local/bin
+make install
+
+# Run tests
+make test
+
+# Clean build artifacts
+make clean
+```
+
+## Development Commands
+
+```bash
 # Run on a file
-./zig-out/bin/wat <file.zig>
+./zig-out/bin/wat <file>
 
 # Build and run
-zig build run -- <file.zig>
+zig build run -- <file>
+
+# Install debug build for testing
+make install-debug
+
+# Install as symlink (for development)
+make install-link
 ```
 
 ## Architecture
 
-The project uses tree-sitter for parsing and currently has a monolithic structure that will evolve into a plugin-based system:
+The project uses tree-sitter for parsing with support for 10 languages bundled directly into the binary:
 
-1. **Tree-sitter Integration**: Dependencies defined in `build.zig.zon`
-   - `tree_sitter`: Core tree-sitter Zig bindings
-   - `tree_sitter_zig`: Zig language grammar (C parser compiled directly)
+1. **Core Components**:
+   - `src/main.zig`: Main entry point, language detection, command routing
+   - `src/database.zig`: SQLite-based persistent storage for symbols and references
+   - `src/gitignore.zig`: .gitignore parsing for filtering files during indexing
+   - `src/interactive.zig`: Terminal UI for interactive fuzzy search
 
-2. **Symbol Extraction**: The `extractSymbols` function in `src/main.zig` walks the AST looking for specific node types:
-   - `function_declaration`, `test_declaration`
-   - `variable_declaration`, `struct_declaration`
-   - `enum_declaration`, `union_declaration`
-   - `error_set_declaration`
+2. **Language Support**: Grammars are linked via `build.zig` and `build.zig.zon`:
+   - Each language has an `extern fn tree_sitter_<lang>()` declaration
+   - Grammar C files are compiled directly from dependencies
+   - Languages with scanners: Python, JavaScript, TypeScript, Rust, Elixir, HTML
+   - Languages without scanners: Zig, Go, C, Java
 
-3. **Grammar Linking**: The Zig grammar is linked via:
-   - `extern fn tree_sitter_zig()` declaration
-   - Direct compilation of `parser.c` from the grammar dependency
-   - No modification of cached dependencies - they're compiled as-is
+3. **Symbol Extraction**: The `extractSymbols` function walks ASTs looking for language-specific node types:
+   - Functions, methods, constructors
+   - Types, classes, interfaces, structs
+   - Variables, constants, fields
+   - Language-specific constructs (Go specs, Python assignments, Rust macros, etc.)
 
-## Key Design Decisions
+## Key Design Principles
 
-- **No LSP**: Designed for batch operations and LLM context extraction, not real-time editing
-- **Plugin Architecture**: Future versions will allow `wat plugin add <language>` instead of bundling all grammars
-- **Tree-sitter Based**: Provides accurate parsing without implementing custom parsers
+- **Extract Everything**: Include private symbols, internal methods, constants - be comprehensive
+- **No Configuration**: Works out of the box with zero setup
+- **Fast Operations**: Designed for batch processing, not real-time editing
+- **Language Bundling**: All grammars compiled into single ~14MB binary
 
-## Current Limitations
+## Testing
 
-- Only supports Zig files
-- No persistent index (re-parses every time)
-- Basic ctags-style output only
-- No language detection (must be Zig files)
+Tests are in `tests/test_smoke.sh` which verifies symbol extraction for all supported languages. Test fixtures are in `tests/fixtures/simple.*` - one per language showing all supported symbol types.
+
+## Adding New Languages
+
+See the detailed guide in README.md under "Adding a New Language". Key steps:
+1. Add grammar dependency to `build.zig.zon`
+2. Update `build.zig` to compile parser.c (and scanner.c if needed)
+3. Add extern declaration and file extension detection in `src/main.zig`
+4. Identify node types and update `extractSymbols`
+5. Create test fixture and update test script
+
+## Database Schema
+
+SQLite database (`wat.db`) structure:
+- `files`: path, last_modified, language
+- `symbols`: name, file_id, line, node_type
+- `refs`: symbol_id, file_id, line, context, is_definition
+
+The database is created in the current working directory and supports incremental updates based on file modification times.

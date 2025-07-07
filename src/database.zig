@@ -193,7 +193,7 @@ pub const Database = struct {
     
     pub fn findSymbol(self: Self, name: []const u8, allocator: std.mem.Allocator) ![]Symbol {
         const sql = 
-            \\SELECT s.name, s.line, s.node_type, f.path
+            \\SELECT s.name, s.line, s.node_type, f.path, f.language
             \\FROM symbols s
             \\JOIN files f ON s.file_id = f.id
             \\WHERE s.name = ?
@@ -221,12 +221,14 @@ pub const Database = struct {
             const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
             const node_type = std.mem.span(c.sqlite3_column_text(stmt, 2));
             const path = std.mem.span(c.sqlite3_column_text(stmt, 3));
+            const language = std.mem.span(c.sqlite3_column_text(stmt, 4));
             
             try symbols.append(.{
                 .name = try allocator.dupe(u8, sym_name),
                 .line = line,
                 .node_type = try allocator.dupe(u8, node_type),
                 .path = try allocator.dupe(u8, path),
+                .language = try allocator.dupe(u8, language),
             });
         }
         
@@ -235,7 +237,7 @@ pub const Database = struct {
     
     pub fn findSymbolFuzzy(self: Self, pattern: []const u8, allocator: std.mem.Allocator) ![]SymbolMatch {
         const sql = 
-            \\SELECT DISTINCT s.name, s.line, s.node_type, f.path
+            \\SELECT DISTINCT s.name, s.line, s.node_type, f.path, f.language
             \\FROM symbols s
             \\JOIN files f ON s.file_id = f.id
             \\WHERE LOWER(s.name) LIKE LOWER(?)
@@ -298,6 +300,7 @@ pub const Database = struct {
             const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
             const node_type = std.mem.span(c.sqlite3_column_text(stmt, 2));
             const path = std.mem.span(c.sqlite3_column_text(stmt, 3));
+            const language = std.mem.span(c.sqlite3_column_text(stmt, 4));
             
             // Create a unique key for this symbol
             const key = try std.fmt.allocPrint(allocator, "{s}:{s}:{d}", .{ sym_name, path, line });
@@ -334,6 +337,7 @@ pub const Database = struct {
                     .line = line,
                     .node_type = try allocator.dupe(u8, node_type),
                     .path = try allocator.dupe(u8, path),
+                    .language = try allocator.dupe(u8, language),
                 },
                 .score = score,
                 .match_type = try allocator.dupe(u8, match_type),
@@ -581,12 +585,31 @@ pub const Database = struct {
     }
     
     pub fn findEntryPoints(self: Self, allocator: std.mem.Allocator) ![]Symbol {
+        // Language-specific entry point detection
         const sql = 
-            \\SELECT s.name, s.line, s.node_type, f.path
-            \\FROM symbols s
-            \\JOIN files f ON s.file_id = f.id
-            \\WHERE s.name = 'main' OR s.name LIKE 'pub %'
-            \\ORDER BY s.name
+            \\WITH ranked_symbols AS (
+            \\    SELECT s.name, s.line, s.node_type, f.path, f.language,
+            \\           CASE 
+            \\               -- Traditional main functions
+            \\               WHEN s.name = 'main' AND f.language IN ('c', 'cpp', 'zig', 'go', 'rust', 'java') THEN 1
+            \\               -- Python __main__
+            \\               WHEN s.name = '__main__' AND f.language = 'python' THEN 2
+            \\               -- Elixir Application start
+            \\               WHEN s.name LIKE '%Application' AND f.language = 'elixir' THEN 3
+            \\               WHEN s.name LIKE '%.start' AND f.language = 'elixir' THEN 3
+            \\               -- JavaScript/TypeScript common patterns
+            \\               WHEN s.name IN ('listen', 'start', 'run') AND f.language IN ('javascript', 'typescript') THEN 4
+            \\               -- Ruby
+            \\               WHEN s.name = '__main__' AND f.language = 'ruby' THEN 5
+            \\               ELSE 99
+            \\           END as priority
+            \\    FROM symbols s
+            \\    JOIN files f ON s.file_id = f.id
+            \\)
+            \\SELECT name, line, node_type, path, language
+            \\FROM ranked_symbols
+            \\WHERE priority < 99
+            \\ORDER BY priority, name, path
         ;
         
         var stmt: ?*c.sqlite3_stmt = null;
@@ -607,16 +630,16 @@ pub const Database = struct {
             const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
             const node_type = std.mem.span(c.sqlite3_column_text(stmt, 2));
             const path = std.mem.span(c.sqlite3_column_text(stmt, 3));
+            const language = std.mem.span(c.sqlite3_column_text(stmt, 4));
             
-            // For now, only include actual main functions
-            if (std.mem.eql(u8, name, "main")) {
-                try symbols.append(.{
-                    .name = try allocator.dupe(u8, name),
-                    .line = line,
-                    .node_type = try allocator.dupe(u8, node_type),
-                    .path = try allocator.dupe(u8, path),
-                });
-            }
+            // Include all detected entry points
+            try symbols.append(.{
+                .name = try allocator.dupe(u8, name),
+                .line = line,
+                .node_type = try allocator.dupe(u8, node_type),
+                .path = try allocator.dupe(u8, path),
+                .language = try allocator.dupe(u8, language),
+            });
         }
         
         return symbols.toOwnedSlice();
@@ -770,11 +793,13 @@ pub const Symbol = struct {
     line: u32,
     node_type: []const u8,
     path: []const u8,
+    language: []const u8,
     
     pub fn deinit(self: *Symbol, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         allocator.free(self.node_type);
         allocator.free(self.path);
+        allocator.free(self.language);
     }
 };
 

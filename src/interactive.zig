@@ -117,6 +117,7 @@ pub const InteractiveFinder = struct {
                         .line = sym.line,
                         .node_type = try self.allocator.dupe(u8, sym.node_type),
                         .path = try self.allocator.dupe(u8, sym.path),
+                        .language = try self.allocator.dupe(u8, sym.language),
                     },
                     .score = 100,
                     .match_type = try self.allocator.dupe(u8, "exact"),

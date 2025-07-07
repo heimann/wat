@@ -1500,10 +1500,26 @@ fn mapCommand(allocator: std.mem.Allocator, entry_point: ?[]const u8, max_depth:
         // Find main functions
         const entry_points = try db.findEntryPoints(arena_allocator);
         if (entry_points.len == 0) {
-            stderr.print("No entry points found (looking for 'main' functions)\n", .{}) catch {};
+            stderr.print("No entry points found\n", .{}) catch {};
             return;
         }
         
+        // Group entry points by language
+        stdout.print("Found {} entry points:\n", .{entry_points.len}) catch {};
+        stdout.print("{s}\n", .{"-" ** 60}) catch {};
+        
+        for (entry_points, 0..) |sym, i| {
+            stdout.print("{d}. [{s}] {s} in {s}:{d}\n", .{ 
+                i + 1, 
+                sym.language, 
+                sym.name, 
+                sym.path, 
+                sym.line 
+            }) catch {};
+        }
+        stdout.print("\n", .{}) catch {};
+        
+        // Process all entry points
         for (entry_points) |sym| {
             try symbols_to_process.append(.{
                 .symbol = sym.name,
@@ -1636,16 +1652,101 @@ fn printCallTree(
 }
 
 fn extractSignature(allocator: std.mem.Allocator, _: *Database, symbol: @import("database.zig").Symbol) !?[]const u8 {
-    // For now, return a simple signature based on node type
-    // In the future, we could parse the actual signature from the source
-    if (std.mem.eql(u8, symbol.node_type, "function_declaration") or
-        std.mem.eql(u8, symbol.node_type, "function_definition")) {
-        return try allocator.dupe(u8, "()");
-    } else if (std.mem.eql(u8, symbol.node_type, "method_declaration") or
-               std.mem.eql(u8, symbol.node_type, "method_definition")) {
+    // Get the source file content to extract actual signature
+    const file = std.fs.cwd().openFile(symbol.path, .{}) catch {
+        // If we can't read the file, fall back to generic signature
+        return try getGenericSignature(allocator, symbol);
+    };
+    defer file.close();
+    
+    // Read a reasonable amount around the symbol line
+    const file_size = try file.getEndPos();
+    const read_size = @min(file_size, 4096); // Read up to 4KB
+    const start_pos = if (symbol.line > 10) (symbol.line - 10) * 80 else 0; // Rough estimate
+    
+    try file.seekTo(@min(start_pos, file_size));
+    const content = try allocator.alloc(u8, read_size);
+    defer allocator.free(content);
+    _ = try file.read(content);
+    
+    // Extract signature based on language
+    if (std.mem.eql(u8, symbol.language, "python")) {
+        return try extractPythonSignature(allocator, content, symbol);
+    } else if (std.mem.eql(u8, symbol.language, "javascript") or 
+               std.mem.eql(u8, symbol.language, "typescript")) {
+        return try extractJavaScriptSignature(allocator, content, symbol);
+    } else if (std.mem.eql(u8, symbol.language, "go")) {
+        return try extractGoSignature(allocator, content, symbol);
+    } else if (std.mem.eql(u8, symbol.language, "rust")) {
+        return try extractRustSignature(allocator, content, symbol);
+    } else if (std.mem.eql(u8, symbol.language, "elixir")) {
+        return try extractElixirSignature(allocator, content, symbol);
+    } else if (std.mem.eql(u8, symbol.language, "java")) {
+        return try extractJavaSignature(allocator, content, symbol);
+    } else if (std.mem.eql(u8, symbol.language, "c") or 
+               std.mem.eql(u8, symbol.language, "zig")) {
+        return try extractCStyleSignature(allocator, content, symbol);
+    }
+    
+    return try getGenericSignature(allocator, symbol);
+}
+
+fn getGenericSignature(allocator: std.mem.Allocator, symbol: @import("database.zig").Symbol) !?[]const u8 {
+    if (std.mem.indexOf(u8, symbol.node_type, "function") != null or
+        std.mem.indexOf(u8, symbol.node_type, "method") != null) {
         return try allocator.dupe(u8, "()");
     }
     return null;
+}
+
+// Simplified signature extractors - just show parameter count for now
+fn extractPythonSignature(allocator: std.mem.Allocator, content: []const u8, symbol: @import("database.zig").Symbol) ![]const u8 {
+    _ = content;
+    _ = symbol;
+    // TODO: Parse actual Python signatures
+    return try allocator.dupe(u8, "(...)");
+}
+
+fn extractJavaScriptSignature(allocator: std.mem.Allocator, content: []const u8, symbol: @import("database.zig").Symbol) ![]const u8 {
+    _ = content;
+    _ = symbol;
+    // TODO: Parse actual JavaScript signatures
+    return try allocator.dupe(u8, "(...)");
+}
+
+fn extractGoSignature(allocator: std.mem.Allocator, content: []const u8, symbol: @import("database.zig").Symbol) ![]const u8 {
+    _ = content;
+    _ = symbol;
+    // TODO: Parse actual Go signatures
+    return try allocator.dupe(u8, "() error");
+}
+
+fn extractRustSignature(allocator: std.mem.Allocator, content: []const u8, symbol: @import("database.zig").Symbol) ![]const u8 {
+    _ = content;
+    _ = symbol;
+    // TODO: Parse actual Rust signatures
+    return try allocator.dupe(u8, "() -> Result");
+}
+
+fn extractElixirSignature(allocator: std.mem.Allocator, content: []const u8, symbol: @import("database.zig").Symbol) ![]const u8 {
+    _ = content;
+    _ = symbol;
+    // TODO: Parse actual Elixir signatures
+    return try allocator.dupe(u8, "/0");
+}
+
+fn extractJavaSignature(allocator: std.mem.Allocator, content: []const u8, symbol: @import("database.zig").Symbol) ![]const u8 {
+    _ = content;
+    _ = symbol;
+    // TODO: Parse actual Java signatures
+    return try allocator.dupe(u8, "()");
+}
+
+fn extractCStyleSignature(allocator: std.mem.Allocator, content: []const u8, symbol: @import("database.zig").Symbol) ![]const u8 {
+    _ = content;
+    _ = symbol;
+    // TODO: Parse actual C/Zig signatures
+    return try allocator.dupe(u8, "()");
 }
 
 const DatabaseContext = struct {

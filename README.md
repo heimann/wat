@@ -566,6 +566,31 @@ Run `make test` to ensure everything works, then commit with a descriptive messa
 - What symbol types are supported
 - Binary size impact
 
+## Development Notes
+
+### Git Branch Awareness
+
+**Problem**: Currently, `wat index` uses file modification times for incremental updates. This means:
+- Running `wat index` multiple times on the same branch works correctly
+- However, switching git branches can leave the database in an inconsistent state
+- Symbols from deleted/modified files may persist after branch switches
+- The database can grow quite large in repositories with many branches (e.g., Linux kernel)
+
+**Planned Solution**: Implement git-aware invalidation to handle branch switches:
+- Store file content hash alongside modification time in the database
+- Detect current git commit/branch and invalidate stale entries
+- Options being considered:
+  - Store git commit hash with each indexed file
+  - Use file content hash for change detection (already has `hash` column in schema)
+  - Add a `wat clean` command to purge stale entries
+  - Implement automatic cleanup when branch change is detected
+- Balance between accuracy and performance (avoid making the database too large)
+
+**Current Workaround**: Delete `wat.db` when switching branches or after major changes:
+```bash
+rm wat.db && wat index
+```
+
 ## Continuing Development
 
 If you're picking up development in a new Claude Code instance:

@@ -277,6 +277,48 @@ pub fn main() !void {
         }
         
         try mapCommand(allocator, entry_point, max_depth);
+    } else if (std.mem.eql(u8, args[1], "file")) {
+        if (args.len < 3 or (args.len >= 3 and std.mem.eql(u8, args[2], "--help"))) {
+            try stderr.print("Usage: {s} file <filepath> [options]\n\n", .{args[0]});
+            try stderr.print("Show comprehensive information about a file including:\n", .{});
+            try stderr.print("  - Symbols defined in the file\n", .{});
+            try stderr.print("  - External symbols/files referenced\n", .{});
+            try stderr.print("  - Other files that reference this file's symbols\n\n", .{});
+            try stderr.print("Options:\n", .{});
+            try stderr.print("  --format <type>  Output format: normal, json, dot (default: normal)\n", .{});
+            try stderr.print("  --unused         Highlight symbols with no external references\n", .{});
+            try stderr.print("  --all            Show all symbols (bypass filtering of local variables)\n", .{});
+            try stderr.print("  --api-only       Show API summary (types, constants, functions, dependencies)\n", .{});
+            try stderr.print("  --signatures     Include line numbers with functions (with --api-only)\n", .{});
+            try stderr.print("  --help           Show this help message\n", .{});
+            return;
+        }
+        
+        const file_path = args[2];
+        var format: []const u8 = "normal";
+        var show_unused = false;
+        var show_all = false;
+        var api_only = false;
+        var show_signatures = false;
+        
+        // Parse options
+        var i: usize = 3;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--format") and i + 1 < args.len) {
+                format = args[i + 1];
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--unused")) {
+                show_unused = true;
+            } else if (std.mem.eql(u8, args[i], "--all")) {
+                show_all = true;
+            } else if (std.mem.eql(u8, args[i], "--api-only")) {
+                api_only = true;
+            } else if (std.mem.eql(u8, args[i], "--signatures")) {
+                show_signatures = true;
+            }
+        }
+        
+        try fileCommand(allocator, file_path, format, show_unused, show_all, api_only, show_signatures);
     } else {
         // Default: process single file
         const file_path = args[1];
@@ -681,6 +723,7 @@ fn printUsage(program_name: []const u8) void {
     stdout.print("  {s} context <symbol>                         Show full context of symbol with documentation\n", .{program_name}) catch {};
     stdout.print("  {s} deps <symbol>                            Show dependencies of symbol\n", .{program_name}) catch {};
     stdout.print("  {s} map [options]                            Show call tree structure\n", .{program_name}) catch {};
+    stdout.print("  {s} file <filepath> [options]                Show file analysis with dependencies\n", .{program_name}) catch {};
     stdout.print("\nFor help on specific commands, use:\n", .{}) catch {};
     stdout.print("  {s} <command> --help\n", .{program_name}) catch {};
     stdout.print("\nTip: Use 'find <pattern> --fuzzy' for fuzzy matching\n", .{}) catch {};
@@ -1467,6 +1510,627 @@ fn depsCommand(allocator: std.mem.Allocator, symbol_name: []const u8) !void {
         }
         stdout.print("  - {s}\n", .{dep.depends_on}) catch {};
     }
+}
+
+fn fileCommand(allocator: std.mem.Allocator, file_path: []const u8, format: []const u8, show_unused: bool, show_all: bool, api_only: bool, show_signatures: bool) !void {
+    var db = try Database.init("wat.db");
+    defer db.deinit();
+    
+    // Try to find the file in the database - first as-is, then as absolute path
+    const file_id = db.getFileId(file_path) catch |err| switch (err) {
+        error.NotFound => blk: {
+            // Try absolute path
+            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+            const abs_path = std.fs.cwd().realpath(file_path, &path_buf) catch {
+                stderr.print("File not found: {s}\n", .{file_path}) catch {};
+                return;
+            };
+            
+            // Try with absolute path
+            break :blk db.getFileId(abs_path) catch |err2| switch (err2) {
+                error.NotFound => {
+                    stderr.print("File not found in index: {s}\n", .{file_path}) catch {};
+                    stderr.print("Run 'wat index' to index the directory first.\n", .{}) catch {};
+                    return;
+                },
+                else => return err2,
+            };
+        },
+        else => return err,
+    };
+    
+    // Get all symbols defined in this file
+    const symbols = try db.getFileSymbols(file_id, allocator);
+    defer @import("database.zig").deinitSymbols(symbols, allocator);
+    
+    if (api_only) {
+        // Show API summary
+        try formatApiOnly(allocator, file_path, symbols, show_signatures, &db);
+        return;
+    }
+    
+    // Get all references from this file (outgoing)
+    const outgoing_refs = try db.getFileOutgoingRefs(file_id, allocator);
+    defer @import("database.zig").deinitReferences(outgoing_refs, allocator);
+    
+    // Get all references to this file's symbols (incoming)
+    const incoming_refs = try db.getFileIncomingRefs(file_id, allocator);
+    defer @import("database.zig").deinitFileReferences(incoming_refs, allocator);
+    
+    // Determine unused symbols if requested
+    var unused_symbols = std.StringHashMap(void).init(allocator);
+    defer unused_symbols.deinit();
+    
+    if (show_unused) {
+        // Add all symbols to unused set
+        for (symbols) |sym| {
+            try unused_symbols.put(sym.name, {});
+        }
+        
+        // Remove symbols that have incoming references
+        for (incoming_refs) |ref| {
+            _ = unused_symbols.remove(ref.symbol_name);
+        }
+    }
+    
+    // Format output based on requested format
+    if (std.mem.eql(u8, format, "json")) {
+        try formatFileOutputJson(file_path, symbols, outgoing_refs, incoming_refs, &unused_symbols);
+    } else if (std.mem.eql(u8, format, "dot")) {
+        try formatFileOutputDot(file_path, symbols, outgoing_refs, incoming_refs);
+    } else {
+        try formatFileOutputNormal(file_path, symbols, outgoing_refs, incoming_refs, &unused_symbols, show_unused, show_all);
+    }
+}
+
+fn formatApiOnly(
+    allocator: std.mem.Allocator,
+    file_path: []const u8,
+    symbols: []const @import("database.zig").Symbol,
+    show_signatures: bool,
+    db: *Database,
+) !void {
+    // Extract API elements: functions, types, and public constants
+    var functions = std.ArrayList(@import("database.zig").Symbol).init(allocator);
+    defer functions.deinit();
+    var types = std.ArrayList(@import("database.zig").Symbol).init(allocator);
+    defer types.deinit();
+    var constants = std.ArrayList(@import("database.zig").Symbol).init(allocator);
+    defer constants.deinit();
+    
+    for (symbols) |sym| {
+        // Functions and methods
+        if (std.mem.eql(u8, sym.node_type, "function_declaration") or
+            std.mem.eql(u8, sym.node_type, "method_declaration") or
+            std.mem.eql(u8, sym.node_type, "function_definition") or
+            std.mem.eql(u8, sym.node_type, "function_item") or
+            std.mem.eql(u8, sym.node_type, "def") or
+            std.mem.eql(u8, sym.node_type, "defp")) {
+            
+            // For Zig, skip extern function declarations - they're imports, not API
+            if (std.mem.eql(u8, sym.language, "zig")) {
+                // Skip tree-sitter extern functions
+                if (std.mem.indexOf(u8, sym.name, "tree_sitter_") != null) continue;
+                // Skip if it's an extern function (check line content would be better)
+                // For now, we'll assume functions below line 50 in main.zig are likely externs
+                if (std.mem.eql(u8, file_path, "src/main.zig") and sym.line < 25) continue;
+            }
+            
+            // Skip common internal functions
+            if (std.mem.eql(u8, sym.name, "init") or
+                std.mem.eql(u8, sym.name, "__init__") or
+                std.mem.eql(u8, sym.name, "deinit") or
+                std.mem.eql(u8, sym.name, "new") or
+                std.mem.eql(u8, sym.name, "constructor") or
+                std.mem.eql(u8, sym.name, "main")) continue;
+                
+            try functions.append(sym);
+        }
+        // Types, classes, structs, interfaces, enums
+        else if (std.mem.eql(u8, sym.node_type, "class_declaration") or
+                 std.mem.eql(u8, sym.node_type, "class_definition") or
+                 std.mem.eql(u8, sym.node_type, "struct_declaration") or
+                 std.mem.eql(u8, sym.node_type, "struct_item") or
+                 std.mem.eql(u8, sym.node_type, "struct_specifier") or
+                 std.mem.eql(u8, sym.node_type, "interface_declaration") or
+                 std.mem.eql(u8, sym.node_type, "type_declaration") or
+                 std.mem.eql(u8, sym.node_type, "type_definition") or
+                 std.mem.eql(u8, sym.node_type, "type_alias_declaration") or
+                 std.mem.eql(u8, sym.node_type, "enum_declaration") or
+                 std.mem.eql(u8, sym.node_type, "enum_item") or
+                 std.mem.eql(u8, sym.node_type, "error_set_declaration") or
+                 std.mem.eql(u8, sym.node_type, "trait_item") or
+                 std.mem.eql(u8, sym.node_type, "defmodule") or
+                 std.mem.eql(u8, sym.node_type, "defprotocol")) {
+            // Skip internal types
+            if (std.mem.eql(u8, sym.name, "Self") or
+                std.mem.eql(u8, sym.name, "self")) continue;
+            try types.append(sym);
+        }
+        // Public constants and important variables
+        else if (std.mem.eql(u8, sym.node_type, "const_declaration") or
+                 std.mem.eql(u8, sym.node_type, "const_item") or
+                 std.mem.eql(u8, sym.node_type, "static_item") or
+                 (std.mem.eql(u8, sym.node_type, "variable_declaration") and isPublicConstant(sym))) {
+            try constants.append(sym);
+        }
+    }
+    
+    // Get file dependencies
+    const file_id = try db.getFileId(file_path);
+    const incoming = try db.getFileIncomingRefs(file_id, allocator);
+    defer @import("database.zig").deinitFileReferences(incoming, allocator);
+    
+    // For dependencies, we need to look at what files this file imports
+    // This is a simplified approach - just look at unique files from outgoing refs
+    var deps_set = std.StringHashMap(void).init(allocator);
+    defer deps_set.deinit();
+    var dependents_set = std.StringHashMap(void).init(allocator);
+    defer dependents_set.deinit();
+    
+    // For now, let's just use incoming refs to find dependents
+    for (incoming) |ref| {
+        // Skip self-references
+        if (std.mem.eql(u8, ref.referencing_file, file_path)) continue;
+        try dependents_set.put(ref.referencing_file, {});
+    }
+    
+    // Print API
+    try stdout.print("API for {s}:\n", .{file_path});
+    try stdout.print("{s}\n\n", .{"=" ** 50});
+    
+    // Print types
+    if (types.items.len > 0) {
+        try stdout.print("Types:\n", .{});
+        for (types.items) |sym| {
+            try stdout.print("  {s}\n", .{sym.name});
+        }
+        try stdout.print("\n", .{});
+    }
+    
+    // Print constants
+    if (constants.items.len > 0) {
+        try stdout.print("Constants:\n", .{});
+        for (constants.items) |sym| {
+            try stdout.print("  {s}\n", .{sym.name});
+        }
+        try stdout.print("\n", .{});
+    }
+    
+    // Print functions
+    if (functions.items.len > 0) {
+        try stdout.print("Functions:\n", .{});
+        for (functions.items) |sym| {
+            if (show_signatures) {
+                // For now, show function name with line number as a simple "signature"
+                // TODO: Implement proper signature extraction from source
+                try stdout.print("  {s} (line {d})\n", .{sym.name, sym.line});
+            } else {
+                try stdout.print("  {s}\n", .{sym.name});
+            }
+        }
+        try stdout.print("\n", .{});
+    }
+    
+    // Print dependents
+    if (dependents_set.count() > 0) {
+        try stdout.print("Used by:\n", .{});
+        var deps_iter = dependents_set.iterator();
+        while (deps_iter.next()) |entry| {
+            // Extract just the filename from the path
+            const path = entry.key_ptr.*;
+            const basename = std.fs.path.basename(path);
+            try stdout.print("  {s}\n", .{basename});
+        }
+    }
+}
+
+fn isPublicConstant(sym: @import("database.zig").Symbol) bool {
+    // In Zig, public constants typically start with an uppercase letter
+    // and are not imports (std, Database, etc.)
+    if (sym.language.len > 0 and std.mem.eql(u8, sym.language, "zig")) {
+        // Skip imports
+        if (std.mem.eql(u8, sym.name, "std") or
+            std.mem.eql(u8, sym.name, "Database") or
+            std.mem.eql(u8, sym.name, "GitIgnore") or
+            std.mem.eql(u8, sym.name, "allocator") or
+            std.mem.eql(u8, sym.name, "stdout") or
+            std.mem.eql(u8, sym.name, "stderr") or
+            std.mem.indexOf(u8, sym.name, "tree_sitter") != null) {
+            return false;
+        }
+        // Check if it starts with uppercase (likely a public constant or type)
+        if (sym.name.len > 0 and std.ascii.isUpper(sym.name[0])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn isImportantSymbol(sym: @import("database.zig").Symbol) bool {
+    const node_type = sym.node_type;
+    const language = sym.language;
+    
+    // Always include these high-level symbol types (functions, types, classes, etc.)
+    if (std.mem.eql(u8, node_type, "function_declaration") or
+        std.mem.eql(u8, node_type, "function_definition") or
+        std.mem.eql(u8, node_type, "function_item") or
+        std.mem.eql(u8, node_type, "method_declaration") or
+        std.mem.eql(u8, node_type, "method_definition") or
+        std.mem.eql(u8, node_type, "constructor_declaration") or
+        std.mem.eql(u8, node_type, "class_declaration") or
+        std.mem.eql(u8, node_type, "class_definition") or
+        std.mem.eql(u8, node_type, "struct_declaration") or
+        std.mem.eql(u8, node_type, "struct_item") or
+        std.mem.eql(u8, node_type, "struct_specifier") or
+        std.mem.eql(u8, node_type, "interface_declaration") or
+        std.mem.eql(u8, node_type, "trait_item") or
+        std.mem.eql(u8, node_type, "impl_item") or
+        std.mem.eql(u8, node_type, "enum_declaration") or
+        std.mem.eql(u8, node_type, "enum_item") or
+        std.mem.eql(u8, node_type, "enum_specifier") or
+        std.mem.eql(u8, node_type, "enum_constant") or
+        std.mem.eql(u8, node_type, "type_declaration") or
+        std.mem.eql(u8, node_type, "type_definition") or
+        std.mem.eql(u8, node_type, "type_item") or
+        std.mem.eql(u8, node_type, "type_alias_declaration") or
+        std.mem.eql(u8, node_type, "const_declaration") or
+        std.mem.eql(u8, node_type, "const_item") or
+        std.mem.eql(u8, node_type, "test_declaration") or
+        std.mem.eql(u8, node_type, "error_set_declaration") or
+        std.mem.eql(u8, node_type, "field_declaration") or
+        std.mem.eql(u8, node_type, "public_field_definition") or
+        std.mem.eql(u8, node_type, "macro_definition") or
+        std.mem.eql(u8, node_type, "preproc_def") or
+        std.mem.eql(u8, node_type, "union_declaration") or
+        std.mem.eql(u8, node_type, "union_specifier") or
+        std.mem.eql(u8, node_type, "static_item") or
+        std.mem.eql(u8, node_type, "mod_item") or
+        std.mem.eql(u8, node_type, "internal_module") or
+        std.mem.eql(u8, node_type, "defmodule") or
+        std.mem.eql(u8, node_type, "def") or
+        std.mem.eql(u8, node_type, "defp") or
+        std.mem.eql(u8, node_type, "defmacro") or
+        std.mem.eql(u8, node_type, "defprotocol") or
+        std.mem.eql(u8, node_type, "defimpl") or
+        std.mem.eql(u8, node_type, "id_attribute")) {
+        return true;
+    }
+    
+    // Handle variable declarations with language-specific filtering
+    if (std.mem.eql(u8, node_type, "variable_declaration") or
+        std.mem.eql(u8, node_type, "lexical_declaration") or
+        std.mem.eql(u8, node_type, "assignment") or
+        std.mem.eql(u8, node_type, "declaration")) {
+        
+        // Skip single-letter variables (likely loop counters or temporaries)
+        if (sym.name.len == 1) return false;
+        
+        // Skip common temporary variable names
+        if (std.mem.eql(u8, sym.name, "result") or
+            std.mem.eql(u8, sym.name, "err") or
+            std.mem.eql(u8, sym.name, "error") or
+            std.mem.eql(u8, sym.name, "stmt") or
+            std.mem.eql(u8, sym.name, "sql") or
+            std.mem.eql(u8, sym.name, "i") or
+            std.mem.eql(u8, sym.name, "j") or
+            std.mem.eql(u8, sym.name, "k") or
+            std.mem.eql(u8, sym.name, "idx") or
+            std.mem.eql(u8, sym.name, "tmp") or
+            std.mem.eql(u8, sym.name, "temp") or
+            std.mem.eql(u8, sym.name, "it") or
+            std.mem.eql(u8, sym.name, "entry") or
+            std.mem.eql(u8, sym.name, "child") or
+            std.mem.eql(u8, sym.name, "node") or
+            std.mem.eql(u8, sym.name, "_")) {
+            return false;
+        }
+        
+        // Language-specific filtering
+        if (std.mem.eql(u8, language, "zig")) {
+            // For Zig: include imports, constants, and early declarations
+            if (std.mem.eql(u8, sym.name, "std") or
+                std.mem.eql(u8, sym.name, "tree_sitter") or
+                std.mem.startsWith(u8, sym.name, "tree_sitter_") or
+                sym.line < 50) { // Likely module-level imports and constants
+                return true;
+            }
+            // Include uppercase constants
+            if (sym.name.len > 0 and std.ascii.isUpper(sym.name[0])) {
+                return true;
+            }
+        } else if (std.mem.eql(u8, language, "javascript") or std.mem.eql(u8, language, "typescript")) {
+            // For JS/TS: include exports, const declarations, module-level vars
+            if (sym.name.len > 0 and std.ascii.isUpper(sym.name[0])) {
+                return true; // Constants
+            }
+            if (sym.line < 20) { // Likely imports/exports
+                return true;
+            }
+        } else if (std.mem.eql(u8, language, "python")) {
+            // For Python: include module-level assignments (likely constants)
+            if (sym.name.len > 0 and std.ascii.isUpper(sym.name[0])) {
+                return true; // Constants like VERSION, API_KEY
+            }
+            if (sym.line < 30) { // Likely imports
+                return true;
+            }
+        } else if (std.mem.eql(u8, language, "rust")) {
+            // For Rust: include pub items and constants
+            if (sym.name.len > 0 and std.ascii.isUpper(sym.name[0])) {
+                return true; // Constants
+            }
+        } else if (std.mem.eql(u8, language, "c")) {
+            // For C: include global variables and constants
+            if (sym.name.len > 0 and std.ascii.isUpper(sym.name[0])) {
+                return true; // Likely #define constants or global vars
+            }
+        } else if (std.mem.eql(u8, language, "go")) {
+            // For Go: include package-level vars and constants
+            if (sym.name.len > 0 and std.ascii.isUpper(sym.name[0])) {
+                return true; // Exported variables
+            }
+        } else if (std.mem.eql(u8, language, "java")) {
+            // For Java: include static fields and constants
+            if (sym.name.len > 0 and std.ascii.isUpper(sym.name[0])) {
+                return true; // Constants
+            }
+        }
+        
+        return false;
+    }
+    
+    return false;
+}
+
+fn formatFileOutputNormal(
+    file_path: []const u8,
+    symbols: []const @import("database.zig").Symbol,
+    outgoing_refs: []const @import("database.zig").Reference,
+    incoming_refs: []const @import("database.zig").FileReference,
+    unused_symbols: *std.StringHashMap(void),
+    show_unused: bool,
+    show_all: bool,
+) !void {
+    stdout.print("File: {s}\n", .{file_path}) catch {};
+    stdout.print("{s}\n\n", .{"=" ** 80}) catch {};
+    
+    // Filter to only important symbols unless --all is specified
+    var filtered_symbols = std.ArrayList(@import("database.zig").Symbol).init(std.heap.page_allocator);
+    defer filtered_symbols.deinit();
+    
+    if (show_all) {
+        // Show all symbols
+        for (symbols) |sym| {
+            try filtered_symbols.append(sym);
+        }
+    } else {
+        // Filter to important symbols only
+        for (symbols) |sym| {
+            if (isImportantSymbol(sym)) {
+                try filtered_symbols.append(sym);
+            }
+        }
+    }
+    
+    // Symbols defined
+    const filter_note = if (show_all) "" else " (filtered)";
+    stdout.print("Symbols defined in this file ({d}{s}):\n", .{filtered_symbols.items.len, filter_note}) catch {};
+    for (filtered_symbols.items) |sym| {
+        const is_unused = unused_symbols.contains(sym.name);
+        if (is_unused and show_unused) {
+            stdout.print("  {s:<30} {s:<20} line {d:<6} [UNUSED]\n", .{ sym.name, sym.node_type, sym.line }) catch {};
+        } else {
+            stdout.print("  {s:<30} {s:<20} line {d}\n", .{ sym.name, sym.node_type, sym.line }) catch {};
+        }
+    }
+    
+    // External references (filtered)
+    var unique_refs = std.StringHashMap(void).init(std.heap.page_allocator);
+    defer unique_refs.deinit();
+    
+    for (outgoing_refs) |ref| {
+        if (!ref.is_definition and !unique_refs.contains(ref.name)) {
+            // Filter out common/uninteresting references
+            if (std.mem.eql(u8, ref.name, "std") or
+                std.mem.eql(u8, ref.name, "Self") or
+                std.mem.eql(u8, ref.name, "c") or
+                std.mem.eql(u8, ref.name, "builtin") or
+                std.mem.eql(u8, ref.name, "allocator") or
+                std.mem.eql(u8, ref.name, "stderr") or
+                std.mem.eql(u8, ref.name, "stdout") or
+                std.mem.eql(u8, ref.name, "result") or
+                std.mem.eql(u8, ref.name, "err") or
+                std.mem.eql(u8, ref.name, "error") or
+                std.mem.eql(u8, ref.name, "name") or
+                std.mem.eql(u8, ref.name, "path") or
+                std.mem.eql(u8, ref.name, "line") or
+                std.mem.eql(u8, ref.name, "node_type") or
+                std.mem.eql(u8, ref.name, "language") or
+                std.mem.eql(u8, ref.name, "score") or
+                std.mem.eql(u8, ref.name, "match_type") or
+                std.mem.eql(u8, ref.name, "db") or
+                std.mem.eql(u8, ref.name, "init") or
+                std.mem.eql(u8, ref.name, "deinit") or
+                ref.name.len == 1) { // Single letter variables
+                continue;
+            }
+            
+            try unique_refs.put(ref.name, {});
+        }
+    }
+    
+    stdout.print("\nExternal symbols referenced ({d}):\n", .{unique_refs.count()}) catch {};
+    var ref_it = unique_refs.iterator();
+    while (ref_it.next()) |entry| {
+        stdout.print("  {s}\n", .{entry.key_ptr.*}) catch {};
+    }
+    
+    // Incoming references grouped by file
+    stdout.print("\nFiles that reference this file's symbols:\n", .{}) catch {};
+    
+    var file_groups = std.StringHashMap(std.ArrayList(@import("database.zig").FileReference)).init(std.heap.page_allocator);
+    defer {
+        var it = file_groups.iterator();
+        while (it.next()) |entry| {
+            entry.value_ptr.deinit();
+        }
+        file_groups.deinit();
+    }
+    
+    // Filter out common/uninteresting references
+    for (incoming_refs) |ref| {
+        // Skip common imports and types that aren't meaningful
+        if (std.mem.eql(u8, ref.symbol_name, "std") or
+            std.mem.eql(u8, ref.symbol_name, "Self") or
+            std.mem.eql(u8, ref.symbol_name, "c") or
+            std.mem.eql(u8, ref.symbol_name, "builtin") or
+            std.mem.eql(u8, ref.symbol_name, "allocator") or
+            std.mem.eql(u8, ref.symbol_name, "stderr") or
+            std.mem.eql(u8, ref.symbol_name, "stdout") or
+            std.mem.eql(u8, ref.symbol_name, "result") or
+            std.mem.eql(u8, ref.symbol_name, "err") or
+            std.mem.eql(u8, ref.symbol_name, "error") or
+            std.mem.eql(u8, ref.symbol_name, "name") or
+            std.mem.eql(u8, ref.symbol_name, "path") or
+            std.mem.eql(u8, ref.symbol_name, "line") or
+            std.mem.eql(u8, ref.symbol_name, "node_type") or
+            std.mem.eql(u8, ref.symbol_name, "language") or
+            std.mem.eql(u8, ref.symbol_name, "score") or
+            std.mem.eql(u8, ref.symbol_name, "match_type") or
+            std.mem.eql(u8, ref.symbol_name, "db") or
+            std.mem.eql(u8, ref.symbol_name, "init") or
+            std.mem.eql(u8, ref.symbol_name, "deinit") or
+            ref.symbol_name.len == 1) { // Single letter variables
+            continue;
+        }
+        
+        const result = try file_groups.getOrPut(ref.referencing_file);
+        if (!result.found_existing) {
+            result.value_ptr.* = std.ArrayList(@import("database.zig").FileReference).init(std.heap.page_allocator);
+        }
+        try result.value_ptr.append(ref);
+    }
+    
+    var it = file_groups.iterator();
+    while (it.next()) |entry| {
+        if (entry.value_ptr.items.len == 0) continue; // Skip empty entries
+        
+        stdout.print("\n  {s} ({d} references)\n", .{ entry.key_ptr.*, entry.value_ptr.items.len }) catch {};
+        for (entry.value_ptr.items) |ref| {
+            stdout.print("    └─ {s:<30} line {d}\n", .{ ref.symbol_name, ref.ref_line }) catch {};
+        }
+    }
+    
+    if (show_unused and unused_symbols.count() > 0) {
+        stdout.print("\nUnused symbols in this file ({d}):\n", .{unused_symbols.count()}) catch {};
+        var unused_it = unused_symbols.iterator();
+        while (unused_it.next()) |entry| {
+            stdout.print("  {s}\n", .{entry.key_ptr.*}) catch {};
+        }
+    } else if (show_unused) {
+        stdout.print("\nUnused symbols in this file (0):\n", .{}) catch {};
+        stdout.print("  (none - all symbols are referenced)\n", .{}) catch {};
+    }
+}
+
+fn formatFileOutputJson(
+    file_path: []const u8,
+    symbols: []const @import("database.zig").Symbol,
+    outgoing_refs: []const @import("database.zig").Reference,
+    incoming_refs: []const @import("database.zig").FileReference,
+    unused_symbols: *std.StringHashMap(void),
+) !void {
+    // Simple JSON output - could be enhanced with a proper JSON library
+    stdout.print("{{\n", .{}) catch {};
+    stdout.print("  \"file\": \"{s}\",\n", .{file_path}) catch {};
+    stdout.print("  \"symbols\": [\n", .{}) catch {};
+    
+    for (symbols, 0..) |sym, i| {
+        stdout.print("    {{ \"name\": \"{s}\", \"type\": \"{s}\", \"line\": {d}, \"unused\": {} }}", .{
+            sym.name,
+            sym.node_type,
+            sym.line,
+            unused_symbols.contains(sym.name),
+        }) catch {};
+        if (i < symbols.len - 1) {
+            stdout.print(",", .{}) catch {};
+        }
+        stdout.print("\n", .{}) catch {};
+    }
+    
+    stdout.print("  ],\n", .{}) catch {};
+    stdout.print("  \"external_refs\": [\n", .{}) catch {};
+    
+    var unique_refs = std.StringHashMap(void).init(std.heap.page_allocator);
+    defer unique_refs.deinit();
+    
+    var first = true;
+    for (outgoing_refs) |ref| {
+        if (!ref.is_definition and !unique_refs.contains(ref.name)) {
+            try unique_refs.put(ref.name, {});
+            if (!first) stdout.print(",\n", .{}) catch {};
+            stdout.print("    \"{s}\"", .{ref.name}) catch {};
+            first = false;
+        }
+    }
+    
+    stdout.print("\n  ],\n", .{}) catch {};
+    stdout.print("  \"incoming_refs\": [\n", .{}) catch {};
+    
+    for (incoming_refs, 0..) |ref, i| {
+        stdout.print("    {{ \"file\": \"{s}\", \"symbol\": \"{s}\", \"line\": {d} }}", .{
+            ref.referencing_file,
+            ref.symbol_name,
+            ref.ref_line,
+        }) catch {};
+        if (i < incoming_refs.len - 1) {
+            stdout.print(",", .{}) catch {};
+        }
+        stdout.print("\n", .{}) catch {};
+    }
+    
+    stdout.print("  ]\n", .{}) catch {};
+    stdout.print("}}\n", .{}) catch {};
+}
+
+fn formatFileOutputDot(
+    file_path: []const u8,
+    _: []const @import("database.zig").Symbol,
+    outgoing_refs: []const @import("database.zig").Reference,
+    incoming_refs: []const @import("database.zig").FileReference,
+) !void {
+    // DOT format for graphviz visualization
+    stdout.print("digraph file_deps {{\n", .{}) catch {};
+    stdout.print("  rankdir=LR;\n", .{}) catch {};
+    stdout.print("  node [shape=box];\n", .{}) catch {};
+    
+    // Current file node
+    stdout.print("  \"{s}\" [style=filled, fillcolor=lightblue];\n", .{file_path}) catch {};
+    
+    // Outgoing edges
+    var unique_out = std.StringHashMap(void).init(std.heap.page_allocator);
+    defer unique_out.deinit();
+    
+    for (outgoing_refs) |ref| {
+        if (!ref.is_definition and !unique_out.contains(ref.name)) {
+            try unique_out.put(ref.name, {});
+            stdout.print("  \"{s}\" -> \"{s}\" [label=\"uses\"];\n", .{ file_path, ref.name }) catch {};
+        }
+    }
+    
+    // Incoming edges
+    var unique_in = std.StringHashMap(void).init(std.heap.page_allocator);
+    defer unique_in.deinit();
+    
+    for (incoming_refs) |ref| {
+        if (!unique_in.contains(ref.referencing_file)) {
+            try unique_in.put(ref.referencing_file, {});
+            stdout.print("  \"{s}\" -> \"{s}\" [label=\"references\"];\n", .{ ref.referencing_file, file_path }) catch {};
+        }
+    }
+    
+    stdout.print("}}\n", .{}) catch {};
 }
 
 fn mapCommand(allocator: std.mem.Allocator, entry_point: ?[]const u8, max_depth: u32) !void {

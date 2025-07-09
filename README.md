@@ -123,9 +123,64 @@ wat deps Database
 wat map
 wat map --entry processFile --depth 3
 wat map --entry main --depth 5
+
+# Analyze a file's dependencies and references
+wat file src/main.zig
+wat file src/database.zig --unused
+wat file src/main.zig --format json
+wat file src/main.zig --format dot > deps.dot
+
+# Get just the API of a file
+wat file src/main.zig --api-only
+wat file src/database.zig --api-only --signatures
 ```
 
 ## Advanced Features
+
+### File Analysis
+
+The `wat file` command provides comprehensive analysis of a single file's role in the codebase:
+
+```bash
+# Basic file analysis
+wat file src/database.zig
+
+# Show unused symbols
+wat file src/database.zig --unused
+
+# Show all symbols (bypass filtering)
+wat file src/database.zig --all
+
+# Get just the API (functions and file dependencies)
+wat file src/database.zig --api-only
+
+# Include line numbers with functions in API view
+wat file src/database.zig --api-only --signatures
+
+# Export as JSON for tooling
+wat file src/database.zig --format json
+
+# Generate dependency graph
+wat file src/database.zig --format dot | dot -Tpng > deps.png
+```
+
+Shows:
+- **Symbols defined**: All symbols defined in the file with types and line numbers
+- **External references**: What symbols/files this file depends on
+- **Incoming references**: Which files reference symbols from this file
+- **Unused symbols**: Symbols with no external references (with `--unused` flag)
+- **API only**: Just function names and file dependencies (with `--api-only` flag)
+
+Output formats:
+- `normal` (default): Human-readable table format
+- `json`: Machine-readable JSON for integration with other tools
+- `dot`: GraphViz format for visualization
+
+The `--api-only` mode provides a clean interface view:
+- Lists all public types, constants, and functions
+- Excludes common internal functions (init, main, constructor, deinit)
+- Shows which files depend on this file ("Used by")
+- Optionally includes line numbers with `--signatures` flag
 
 ### Interactive Fuzzy Finder
 
@@ -208,6 +263,7 @@ main()
 - Full context extraction with documentation comments
 - Dependency analysis showing what symbols depend on
 - Fuzzy matching with `--fuzzy` flag for finding symbols with partial names
+- File-level dependency analysis with `wat file` command
 
 **Recent Additions:**
 
@@ -220,6 +276,13 @@ main()
 - `wat map` command shows call tree structure of the application
 - Fuzzy matching support with `--fuzzy` flag for partial name matches (prefix, suffix, contains)
 - Interactive fuzzy finder with `--interactive` flag for real-time search and navigation
+- `wat file` command for comprehensive file analysis including:
+  - Symbols defined in the file
+  - External dependencies (what the file uses)
+  - Incoming references (what uses the file)
+  - Unused symbol detection
+  - Multiple output formats (normal, JSON, DOT)
+  - API-only mode with `--api-only` flag for clean interface view
 
 ## Roadmap
 
@@ -369,7 +432,31 @@ LSPs are designed for real-time, interactive development:
 Requirements:
 
 - Zig 0.14.1 or later
+- SQLite3 development libraries
 - Internet connection for initial dependency fetch
+
+### Installing SQLite3 Development Libraries
+
+The project requires SQLite3 development headers and libraries:
+
+```bash
+# Ubuntu/Debian
+sudo apt-get install libsqlite3-dev
+
+# Fedora/RHEL/CentOS
+sudo dnf install sqlite-devel
+
+# Arch Linux
+sudo pacman -S sqlite
+
+# macOS (with Homebrew)
+brew install sqlite3
+
+# Alpine Linux
+sudo apk add sqlite-dev
+```
+
+### Building the Project
 
 ```bash
 zig build --fetch  # First time only

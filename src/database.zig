@@ -786,6 +786,186 @@ pub const Database = struct {
         
         return references.toOwnedSlice();
     }
+    
+    pub fn getFileId(self: Self, file_path: []const u8) !i64 {
+        const sql = "SELECT id FROM files WHERE path = ?";
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_text(stmt, 1, file_path.ptr, @intCast(file_path.len), c.SQLITE_STATIC);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_step(stmt);
+        if (result == c.SQLITE_ROW) {
+            return c.sqlite3_column_int64(stmt, 0);
+        } else if (result == c.SQLITE_DONE) {
+            return error.NotFound;
+        } else {
+            return DatabaseError.StepFailed;
+        }
+    }
+    
+    pub fn getFileSymbols(self: Self, file_id: i64, allocator: std.mem.Allocator) ![]Symbol {
+        const sql = 
+            \\SELECT s.name, s.line, s.node_type, f.path, f.language
+            \\FROM symbols s
+            \\JOIN files f ON s.file_id = f.id
+            \\WHERE s.file_id = ?
+            \\ORDER BY s.line
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_int64(stmt, 1, file_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        var symbols = std.ArrayList(Symbol).init(allocator);
+        errdefer {
+            for (symbols.items) |*sym| {
+                sym.deinit(allocator);
+            }
+            symbols.deinit();
+        }
+        
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const name = c.sqlite3_column_text(stmt, 0);
+            const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
+            const node_type = c.sqlite3_column_text(stmt, 2);
+            const path = c.sqlite3_column_text(stmt, 3);
+            const language = c.sqlite3_column_text(stmt, 4);
+            
+            try symbols.append(.{
+                .name = try allocator.dupe(u8, std.mem.span(name)),
+                .line = line,
+                .node_type = try allocator.dupe(u8, std.mem.span(node_type)),
+                .path = try allocator.dupe(u8, std.mem.span(path)),
+                .language = try allocator.dupe(u8, std.mem.span(language)),
+            });
+        }
+        
+        return symbols.toOwnedSlice();
+    }
+    
+    pub fn getFileOutgoingRefs(self: Self, file_id: i64, allocator: std.mem.Allocator) ![]Reference {
+        const sql = 
+            \\SELECT r.name, r.line, r.column, f.path, r.context, r.is_definition
+            \\FROM refs r
+            \\JOIN files f ON r.file_id = f.id
+            \\WHERE r.file_id = ?
+            \\ORDER BY r.line
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_int64(stmt, 1, file_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        var references = std.ArrayList(Reference).init(allocator);
+        errdefer {
+            for (references.items) |*ref| {
+                ref.deinit(allocator);
+            }
+            references.deinit();
+        }
+        
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const name = c.sqlite3_column_text(stmt, 0);
+            const line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 1)));
+            const column = @as(u32, @intCast(c.sqlite3_column_int(stmt, 2)));
+            const path = c.sqlite3_column_text(stmt, 3);
+            const context = c.sqlite3_column_text(stmt, 4);
+            const is_definition = c.sqlite3_column_int(stmt, 5) != 0;
+            
+            try references.append(.{
+                .name = try allocator.dupe(u8, std.mem.span(name)),
+                .line = line,
+                .column = column,
+                .path = try allocator.dupe(u8, std.mem.span(path)),
+                .context = if (context != null) try allocator.dupe(u8, std.mem.span(context)) else null,
+                .is_definition = is_definition,
+            });
+        }
+        
+        return references.toOwnedSlice();
+    }
+    
+    pub fn getFileIncomingRefs(self: Self, file_id: i64, allocator: std.mem.Allocator) ![]FileReference {
+        const sql = 
+            \\SELECT DISTINCT 
+            \\  f2.path as referencing_file,
+            \\  s.name as symbol_name,
+            \\  r.line as ref_line
+            \\FROM symbols s
+            \\JOIN refs r ON r.name = s.name
+            \\JOIN files f2 ON r.file_id = f2.id
+            \\WHERE s.file_id = ?
+            \\  AND r.file_id != ?
+            \\  AND r.is_definition = 0
+            \\ORDER BY f2.path, r.line
+        ;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        defer {
+            if (stmt) |s| _ = c.sqlite3_finalize(s);
+        }
+        
+        var result = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (result != c.SQLITE_OK) {
+            return DatabaseError.PrepareFailed;
+        }
+        
+        result = c.sqlite3_bind_int64(stmt, 1, file_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        result = c.sqlite3_bind_int64(stmt, 2, file_id);
+        if (result != c.SQLITE_OK) return DatabaseError.BindFailed;
+        
+        var references = std.ArrayList(FileReference).init(allocator);
+        errdefer {
+            for (references.items) |*ref| {
+                ref.deinit(allocator);
+            }
+            references.deinit();
+        }
+        
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const referencing_file = c.sqlite3_column_text(stmt, 0);
+            const symbol_name = c.sqlite3_column_text(stmt, 1);
+            const ref_line = @as(u32, @intCast(c.sqlite3_column_int(stmt, 2)));
+            
+            try references.append(.{
+                .referencing_file = try allocator.dupe(u8, std.mem.span(referencing_file)),
+                .symbol_name = try allocator.dupe(u8, std.mem.span(symbol_name)),
+                .ref_line = ref_line,
+            });
+        }
+        
+        return references.toOwnedSlice();
+    }
 };
 
 pub const Symbol = struct {
@@ -859,6 +1039,17 @@ pub const SymbolWithSignature = struct {
     }
 };
 
+pub const FileReference = struct {
+    referencing_file: []const u8,
+    symbol_name: []const u8,
+    ref_line: u32,
+    
+    pub fn deinit(self: *FileReference, allocator: std.mem.Allocator) void {
+        allocator.free(self.referencing_file);
+        allocator.free(self.symbol_name);
+    }
+};
+
 pub fn deinitSymbols(symbols: []Symbol, allocator: std.mem.Allocator) void {
     for (symbols) |*sym| {
         sym.deinit(allocator);
@@ -885,4 +1076,11 @@ pub fn deinitSymbolMatches(matches: []SymbolMatch, allocator: std.mem.Allocator)
         match.deinit(allocator);
     }
     allocator.free(matches);
+}
+
+pub fn deinitFileReferences(references: []FileReference, allocator: std.mem.Allocator) void {
+    for (references) |*ref| {
+        ref.deinit(allocator);
+    }
+    allocator.free(references);
 }
